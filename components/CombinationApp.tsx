@@ -9,6 +9,7 @@ interface ComponentInput {
   group: string;
   min: number;
   max: number;
+  step: number;
   fixed?: number | null;
 }
 
@@ -37,6 +38,7 @@ export default function CombinationApp() {
       group: 'A',
       min: 0,
       max: 1,
+      step: 0.1,
       fixed: null,
     },
   ]);
@@ -44,8 +46,6 @@ export default function CombinationApp() {
   const [groupConfigs, setGroupConfigs] = useState<Record<string, GroupConfig>>({
     A: { name: 'A', minMass: null, maxMass: null, fixedMass: null, minCount: null, maxCount: null },
   });
-  // Step size on 0-1 scale
-  const [step, setStep] = useState<number>(0.1);
   // Generation state
   const [generating, setGenerating] = useState<boolean>(false);
   const [progress, setProgress] = useState<number>(0);
@@ -66,16 +66,16 @@ export default function CombinationApp() {
       const parsed = JSON.parse(stored) as {
         components?: ComponentInput[];
         groupConfigs?: Record<string, GroupConfig>;
-        step?: number;
       };
       if (parsed.components && parsed.components.length > 0) {
-        setComponents(parsed.components);
+        const normalized = parsed.components.map((comp) => ({
+          ...comp,
+          step: typeof comp.step === 'number' && !Number.isNaN(comp.step) ? comp.step : 0.1,
+        }));
+        setComponents(normalized);
       }
       if (parsed.groupConfigs && Object.keys(parsed.groupConfigs).length > 0) {
         setGroupConfigs(parsed.groupConfigs);
-      }
-      if (typeof parsed.step === 'number' && !Number.isNaN(parsed.step)) {
-        setStep(parsed.step);
       }
     } catch (error) {
       console.warn('Failed to load setup from localStorage.', error);
@@ -114,10 +114,9 @@ export default function CombinationApp() {
     const payload = {
       components,
       groupConfigs,
-      step,
     };
     window.localStorage.setItem(storageKey, JSON.stringify(payload));
-  }, [components, groupConfigs, step, isHydrated]);
+  }, [components, groupConfigs, isHydrated]);
 
   // Handler for updating component fields
   const updateComponent = useCallback(
@@ -160,6 +159,7 @@ export default function CombinationApp() {
         group: newGroup,
         min: 0,
         max: 1,
+        step: 0.1,
         fixed: null,
       },
     ]);
@@ -182,7 +182,7 @@ export default function CombinationApp() {
         return [Number(comp.fixed)];
       }
       const vals: number[] = [];
-      for (let v = comp.min; v <= comp.max + epsilon; v += step) {
+      for (let v = comp.min; v <= comp.max + epsilon; v += comp.step) {
         vals.push(roundValue(v));
       }
       return vals;
@@ -303,18 +303,7 @@ export default function CombinationApp() {
   return (
     <div className="container mx-auto max-w-5xl p-4 space-y-6">
       <h1 className="text-3xl font-bold">Formula Combination Generator</h1>
-      {/* Step size input */}
       <div className="flex flex-col md:flex-row gap-4 items-center">
-        <label className="font-medium">Step (0-1 scale):</label>
-        <input
-          type="number"
-          className="border rounded p-2 w-24"
-          min={0.01}
-          max={1}
-          step={0.01}
-          value={step}
-          onChange={(e) => setStep(parseFloat(e.target.value) || 0.01)}
-        />
         <button
           onClick={generateCombinations}
           disabled={generating}
@@ -356,6 +345,9 @@ export default function CombinationApp() {
               </th>
               <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Max
+              </th>
+              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Step
               </th>
               <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Fixed
@@ -402,6 +394,19 @@ export default function CombinationApp() {
                     max={1}
                     step={0.01}
                     onChange={(e) => updateComponent(comp.id, 'max', parseFloat(e.target.value) || 0)}
+                  />
+                </td>
+                <td className="px-4 py-2">
+                  <input
+                    type="number"
+                    className="border rounded p-1 w-20 text-right"
+                    value={comp.step}
+                    min={0.01}
+                    max={1}
+                    step={0.01}
+                    onChange={(e) =>
+                      updateComponent(comp.id, 'step', parseFloat(e.target.value) || 0.01)
+                    }
                   />
                 </td>
                 <td className="px-4 py-2">
