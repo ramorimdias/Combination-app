@@ -1,4 +1,4 @@
-import CombinationApp from '../components/CombinationApp';
+import CombinationApp from '@/components/CombinationApp';
 
 export default function Home() {
   return <CombinationApp />;
