@@ -36,7 +36,7 @@ export default function CombinationApp() {
       name: 'Component 1',
       group: 'A',
       min: 0,
-      max: 100,
+      max: 1,
       fixed: null,
     },
   ]);
@@ -44,12 +44,45 @@ export default function CombinationApp() {
   const [groupConfigs, setGroupConfigs] = useState<Record<string, GroupConfig>>({
     A: { name: 'A', minMass: null, maxMass: null, fixedMass: null, minCount: null, maxCount: null },
   });
-  // Step size in percentage points
-  const [step, setStep] = useState<number>(10);
+  // Step size on 0-1 scale
+  const [step, setStep] = useState<number>(0.1);
   // Generation state
   const [generating, setGenerating] = useState<boolean>(false);
   const [progress, setProgress] = useState<number>(0);
   const [results, setResults] = useState<ResultRow[]>([]);
+  const [isHydrated, setIsHydrated] = useState<boolean>(false);
+
+  const storageKey = 'combinationAppSetup';
+  const epsilon = 1e-9;
+  const roundValue = (value: number) => Number(value.toFixed(6));
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(storageKey);
+    if (!stored) {
+      setIsHydrated(true);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(stored) as {
+        components?: ComponentInput[];
+        groupConfigs?: Record<string, GroupConfig>;
+        step?: number;
+      };
+      if (parsed.components && parsed.components.length > 0) {
+        setComponents(parsed.components);
+      }
+      if (parsed.groupConfigs && Object.keys(parsed.groupConfigs).length > 0) {
+        setGroupConfigs(parsed.groupConfigs);
+      }
+      if (typeof parsed.step === 'number' && !Number.isNaN(parsed.step)) {
+        setStep(parsed.step);
+      }
+    } catch (error) {
+      console.warn('Failed to load setup from localStorage.', error);
+    } finally {
+      setIsHydrated(true);
+    }
+  }, []);
 
   // Compute unique groups from components and ensure groupConfigs exist
   useEffect(() => {
@@ -75,6 +108,16 @@ export default function CombinationApp() {
     setGroupConfigs(newConfigs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [components.map((c) => c.group).join('|')]);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    const payload = {
+      components,
+      groupConfigs,
+      step,
+    };
+    window.localStorage.setItem(storageKey, JSON.stringify(payload));
+  }, [components, groupConfigs, step, isHydrated]);
 
   // Handler for updating component fields
   const updateComponent = useCallback(
@@ -116,7 +159,7 @@ export default function CombinationApp() {
         name: `Component ${prev.length + 1}`,
         group: newGroup,
         min: 0,
-        max: 100,
+        max: 1,
         fixed: null,
       },
     ]);
@@ -139,8 +182,8 @@ export default function CombinationApp() {
         return [Number(comp.fixed)];
       }
       const vals: number[] = [];
-      for (let v = comp.min; v <= comp.max; v += step) {
-        vals.push(Number(v));
+      for (let v = comp.min; v <= comp.max + epsilon; v += step) {
+        vals.push(roundValue(v));
       }
       return vals;
     });
@@ -158,8 +201,8 @@ export default function CombinationApp() {
       currentSum: number
     ) => {
       if (index === components.length) {
-        // At leaf: check if total sum equals 100
-        if (currentSum === 100) {
+        // At leaf: check if total sum equals 1
+        if (Math.abs(currentSum - 1) <= epsilon) {
           // Check group-level min/fixed requirements
           let valid = true;
           for (const group of groupNames) {
@@ -167,13 +210,13 @@ export default function CombinationApp() {
             const mass = groupMassSums[group] ?? 0;
             const cnt = groupCounts[group] ?? 0;
             if (cfg.fixedMass !== null && cfg.fixedMass !== undefined) {
-              if (mass !== cfg.fixedMass) {
+              if (Math.abs(mass - cfg.fixedMass) > epsilon) {
                 valid = false;
                 break;
               }
             }
             if (cfg.minMass !== null && cfg.minMass !== undefined) {
-              if (mass < cfg.minMass) {
+              if (mass < cfg.minMass - epsilon) {
                 valid = false;
                 break;
               }
@@ -203,9 +246,9 @@ export default function CombinationApp() {
         if (loopCounter % 100 === 0) {
           setProgress(Math.min(100, (loopCounter / totalLoops) * 100));
         }
-        const newSum = currentSum + val;
-        // Early skip if sum exceeds 100
-        if (newSum > 100) continue;
+        const newSum = roundValue(currentSum + val);
+        // Early skip if sum exceeds 1
+        if (newSum > 1 + epsilon) continue;
         // Copy groupMassSums and groupCounts to avoid mutation
         const gm = { ...groupMassSums };
         const gc = { ...groupCounts };
@@ -217,10 +260,10 @@ export default function CombinationApp() {
         const cfg = groupConfigs[group];
         // Check maxMass and fixedMass early
         if (cfg.fixedMass !== null && cfg.fixedMass !== undefined) {
-          if (gm[group] > cfg.fixedMass) continue;
+          if (gm[group] > cfg.fixedMass + epsilon) continue;
         }
         if (cfg.maxMass !== null && cfg.maxMass !== undefined) {
-          if (gm[group] > cfg.maxMass) continue;
+          if (gm[group] > cfg.maxMass + epsilon) continue;
         }
         // Check maxCount
         if (cfg.maxCount !== null && cfg.maxCount !== undefined) {
@@ -262,13 +305,15 @@ export default function CombinationApp() {
       <h1 className="text-3xl font-bold">Formula Combination Generator</h1>
       {/* Step size input */}
       <div className="flex flex-col md:flex-row gap-4 items-center">
-        <label className="font-medium">Step (percentage points):</label>
+        <label className="font-medium">Step (0-1 scale):</label>
         <input
           type="number"
           className="border rounded p-2 w-24"
-          min={1}
+          min={0.01}
+          max={1}
+          step={0.01}
           value={step}
-          onChange={(e) => setStep(parseInt(e.target.value) || 1)}
+          onChange={(e) => setStep(parseFloat(e.target.value) || 0.01)}
         />
         <button
           onClick={generateCombinations}
@@ -342,7 +387,10 @@ export default function CombinationApp() {
                     type="number"
                     className="border rounded p-1 w-20 text-right"
                     value={comp.min}
-                    onChange={(e) => updateComponent(comp.id, 'min', parseInt(e.target.value) || 0)}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    onChange={(e) => updateComponent(comp.id, 'min', parseFloat(e.target.value) || 0)}
                   />
                 </td>
                 <td className="px-4 py-2">
@@ -350,17 +398,23 @@ export default function CombinationApp() {
                     type="number"
                     className="border rounded p-1 w-20 text-right"
                     value={comp.max}
-                    onChange={(e) => updateComponent(comp.id, 'max', parseInt(e.target.value) || 0)}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    onChange={(e) => updateComponent(comp.id, 'max', parseFloat(e.target.value) || 0)}
                   />
                 </td>
                 <td className="px-4 py-2">
                   <input
                     type="number"
                     className="border rounded p-1 w-20 text-right"
+                    min={0}
+                    max={1}
+                    step={0.01}
                     value={comp.fixed ?? ''}
                     onChange={(e) => {
                       const val = e.target.value;
-                      updateComponent(comp.id, 'fixed', val === '' ? null : parseInt(val));
+                      updateComponent(comp.id, 'fixed', val === '' ? null : parseFloat(val));
                     }}
                     placeholder="--"
                   />
@@ -391,7 +445,8 @@ export default function CombinationApp() {
       <div className="mt-8">
         <h2 className="text-2xl font-semibold mb-2">Group Constraints</h2>
         <p className="text-sm text-gray-500 mb-4">
-          Configure mass and count constraints for each group. Leave fields blank for no constraint.
+          Configure mass (0-1 scale) and count constraints for each group. Leave fields blank for no
+          constraint.
         </p>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
@@ -428,6 +483,9 @@ export default function CombinationApp() {
                         type="number"
                         className="border rounded p-1 w-24 text-right"
                         value={cfg.minMass ?? ''}
+                        min={0}
+                        max={1}
+                        step={0.01}
                         onChange={(e) => updateGroupConfig(groupName, 'minMass', e.target.value)}
                         placeholder="--"
                       />
@@ -437,6 +495,9 @@ export default function CombinationApp() {
                         type="number"
                         className="border rounded p-1 w-24 text-right"
                         value={cfg.maxMass ?? ''}
+                        min={0}
+                        max={1}
+                        step={0.01}
                         onChange={(e) => updateGroupConfig(groupName, 'maxMass', e.target.value)}
                         placeholder="--"
                       />
@@ -446,6 +507,9 @@ export default function CombinationApp() {
                         type="number"
                         className="border rounded p-1 w-24 text-right"
                         value={cfg.fixedMass ?? ''}
+                        min={0}
+                        max={1}
+                        step={0.01}
                         onChange={(e) => updateGroupConfig(groupName, 'fixedMass', e.target.value)}
                         placeholder="--"
                       />
