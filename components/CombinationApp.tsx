@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
 interface ComponentInput {
@@ -58,6 +58,10 @@ export default function CombinationApp() {
   const storageKey = 'combinationAppSetup';
   const epsilon = 1e-6;
   const roundValue = (value: number) => Number(value.toFixed(6));
+  const inputBase =
+    'rounded-md border border-neutral-700 bg-neutral-950/70 px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-red-500/60 focus:border-red-500';
+  const inputRight = `${inputBase} text-right`;
+  const inputCenter = `${inputBase} text-center`;
   const decimalPlaces = (value: number) => {
     if (!Number.isFinite(value)) return 0;
     const text = value.toString();
@@ -364,329 +368,341 @@ export default function CombinationApp() {
   };
 
   return (
-    <div className="container mx-auto max-w-5xl p-4 space-y-6">
-      {errorMessage && (
-        <div className="rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
-          {errorMessage}
-        </div>
-      )}
-      <h1 className="text-3xl font-bold">Formula Combination Generator</h1>
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col md:flex-row gap-4 items-center">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium text-gray-700">Total bounds</span>
-            <input
-              type="number"
-              className="border rounded p-1 w-24 text-right"
-              value={minTotal ?? ''}
-              min={0}
-              max={1.5}
-              step={0.01}
-              onChange={(e) => {
-                const val = e.target.value;
-                setMinTotal(val === '' ? null : parseFloat(val));
-              }}
-              placeholder="Min"
-            />
-            <span className="text-sm text-gray-500">to</span>
-            <input
-              type="number"
-              className="border rounded p-1 w-24 text-right"
-              value={maxTotal ?? ''}
-              min={0}
-              max={1.5}
-              step={0.01}
-              onChange={(e) => {
-                const val = e.target.value;
-                setMaxTotal(val === '' ? null : parseFloat(val));
-              }}
-              placeholder="Max"
-            />
+    <div className="min-h-screen bg-neutral-950 text-white">
+      <div className="container mx-auto max-w-6xl p-4 md:p-8 space-y-8">
+        <header className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <div className="bg-red-600 px-4 py-2 text-xl font-extrabold uppercase tracking-[0.35em] text-white">
+              Motul
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.4em] text-red-400">Visco Lab</p>
+              <h1 className="text-3xl font-semibold">Formula Combination Generator</h1>
+              <p className="text-sm text-neutral-300">
+                Configure component ranges and group rules to build Motul-grade blends.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={generateCombinations}
+              disabled={generating}
+              className="rounded-md bg-red-600 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-red-500 disabled:opacity-50"
+            >
+              {generating ? 'Generating...' : 'Generate Combinations'}
+            </button>
+            {results.length > 0 && (
+              <button
+                onClick={exportCSV}
+                className="rounded-md border border-white/15 bg-white/10 px-5 py-2 text-sm font-semibold text-white hover:bg-white/20"
+              >
+                Export CSV
+              </button>
+            )}
+          </div>
+        </header>
+
+        {errorMessage && (
+          <div className="rounded-md border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+            {errorMessage}
+          </div>
+        )}
+
+        <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
+          <div className="space-y-6 rounded-2xl border border-white/10 bg-neutral-900/60 p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold">Components</h2>
+                <p className="text-sm text-neutral-400">
+                  Define each component with min/max limits and step precision.
+                </p>
+              </div>
+              <button
+                onClick={addComponent}
+                className="flex items-center gap-1 text-sm font-semibold text-red-300 hover:text-red-200"
+              >
+                <Plus size={18} /> Add Component
+              </button>
+            </div>
+
+            {/* Components table */}
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-white/10 text-sm">
+                <thead className="bg-white/5 text-xs uppercase tracking-wider text-neutral-300">
+                  <tr>
+                    <th className="px-4 py-2 text-left">Name</th>
+                    <th className="px-4 py-2 text-left">Group</th>
+                    <th className="px-4 py-2 text-left">Min</th>
+                    <th className="px-4 py-2 text-left">Max</th>
+                    <th className="px-4 py-2 text-left">Step</th>
+                    <th className="px-4 py-2 text-left">Fixed</th>
+                    <th className="px-4 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {components.map((comp) => (
+                    <tr key={comp.id}>
+                      <td className="px-4 py-2">
+                        <input
+                          type="text"
+                          className={`${inputBase} w-36`}
+                          value={comp.name}
+                          onChange={(e) => updateComponent(comp.id, 'name', e.target.value)}
+                        />
+                      </td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="text"
+                          className={`${inputCenter} w-16`}
+                          value={comp.group}
+                          onChange={(e) =>
+                            updateComponent(comp.id, 'group', e.target.value.toUpperCase())
+                          }
+                        />
+                      </td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          className={`${inputRight} w-20`}
+                          value={comp.min ?? ''}
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            updateComponent(comp.id, 'min', val === '' ? null : parseFloat(val));
+                          }}
+                        />
+                      </td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          className={`${inputRight} w-20`}
+                          value={comp.max ?? ''}
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            updateComponent(comp.id, 'max', val === '' ? null : parseFloat(val));
+                          }}
+                        />
+                      </td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          className={`${inputRight} w-20`}
+                          value={comp.step === null ? '' : comp.step.toFixed(3)}
+                          min={0.001}
+                          max={1}
+                          step={0.01}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            updateComponent(comp.id, 'step', val === '' ? null : parseFloat(val));
+                          }}
+                        />
+                      </td>
+                      <td className="px-4 py-2">
+                        <input
+                          type="number"
+                          className={`${inputRight} w-20`}
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          value={comp.fixed ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            updateComponent(comp.id, 'fixed', val === '' ? null : parseFloat(val));
+                          }}
+                          placeholder="--"
+                        />
+                      </td>
+                      <td className="px-4 py-2 text-center">
+                        {components.length > 1 && (
+                          <button
+                            className="text-red-400 hover:text-red-300"
+                            onClick={() => removeComponent(comp.id)}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-6">
+              <h2 className="text-lg font-semibold">Total Mass Bounds</h2>
+              <p className="text-sm text-neutral-400">
+                Allow totals between your chosen minimum and maximum range.
+              </p>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <input
+                  type="number"
+                  className={`${inputRight} w-24`}
+                  value={minTotal ?? ''}
+                  min={0}
+                  max={1.5}
+                  step={0.01}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setMinTotal(val === '' ? null : parseFloat(val));
+                  }}
+                  placeholder="Min"
+                />
+                <span className="text-sm text-neutral-400">to</span>
+                <input
+                  type="number"
+                  className={`${inputRight} w-24`}
+                  value={maxTotal ?? ''}
+                  min={0}
+                  max={1.5}
+                  step={0.01}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setMaxTotal(val === '' ? null : parseFloat(val));
+                  }}
+                  placeholder="Max"
+                />
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-6">
+              <h2 className="text-lg font-semibold">Group Constraints</h2>
+              <p className="text-sm text-neutral-400">
+                Configure mass (0-1 scale) and count constraints for each group.
+              </p>
+              <div className="mt-4 overflow-x-auto">
+                <table className="min-w-full divide-y divide-white/10 text-sm">
+                  <thead className="bg-white/5 text-xs uppercase tracking-wider text-neutral-300">
+                    <tr>
+                      <th className="px-4 py-2 text-left">Group</th>
+                      <th className="px-4 py-2 text-left">Min Mass</th>
+                      <th className="px-4 py-2 text-left">Max Mass</th>
+                      <th className="px-4 py-2 text-left">Fixed Mass</th>
+                      <th className="px-4 py-2 text-left">Min Count</th>
+                      <th className="px-4 py-2 text-left">Max Count</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {Object.keys(groupConfigs).map((groupName) => {
+                      const cfg = groupConfigs[groupName];
+                      return (
+                        <tr key={groupName}>
+                          <td className="px-4 py-2 font-medium text-white">{groupName}</td>
+                          <td className="px-4 py-2">
+                            <input
+                              type="number"
+                              className={`${inputRight} w-20`}
+                              value={cfg.minMass ?? ''}
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              onChange={(e) => updateGroupConfig(groupName, 'minMass', e.target.value)}
+                              placeholder="--"
+                            />
+                          </td>
+                          <td className="px-4 py-2">
+                            <input
+                              type="number"
+                              className={`${inputRight} w-20`}
+                              value={cfg.maxMass ?? ''}
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              onChange={(e) => updateGroupConfig(groupName, 'maxMass', e.target.value)}
+                              placeholder="--"
+                            />
+                          </td>
+                          <td className="px-4 py-2">
+                            <input
+                              type="number"
+                              className={`${inputRight} w-20`}
+                              value={cfg.fixedMass ?? ''}
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              onChange={(e) =>
+                                updateGroupConfig(groupName, 'fixedMass', e.target.value)
+                              }
+                              placeholder="--"
+                            />
+                          </td>
+                          <td className="px-4 py-2">
+                            <input
+                              type="number"
+                              className={`${inputRight} w-16`}
+                              value={cfg.minCount ?? ''}
+                              onChange={(e) => updateGroupConfig(groupName, 'minCount', e.target.value)}
+                              placeholder="--"
+                            />
+                          </td>
+                          <td className="px-4 py-2">
+                            <input
+                              type="number"
+                              className={`${inputRight} w-16`}
+                              value={cfg.maxCount ?? ''}
+                              onChange={(e) => updateGroupConfig(groupName, 'maxCount', e.target.value)}
+                              placeholder="--"
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
-        <div className="flex flex-col md:flex-row gap-4 items-center">
-        <button
-          onClick={generateCombinations}
-          disabled={generating}
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
-        >
-          {generating ? 'Generating...' : 'Generate Combinations'}
-        </button>
-        {results.length > 0 && (
-          <button
-            onClick={exportCSV}
-            className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
-          >
-            Export CSV
-          </button>
+        {/* Progress bar */}
+        {generating && (
+          <div className="w-full overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-2 rounded-full bg-red-500 transition-all"
+              style={{ width: `${progress}%` }}
+            ></div>
+          </div>
         )}
-        </div>
-      </div>
-      {/* Progress bar */}
-      {generating && (
-        <div className="w-full bg-gray-200 rounded h-4 overflow-hidden">
-          <div
-            className="bg-blue-500 h-4 transition-all"
-            style={{ width: `${progress}%` }}
-          ></div>
-        </div>
-      )}
-      {/* Components table */}
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Name
-              </th>
-              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Group
-              </th>
-              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Min
-              </th>
-              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Max
-              </th>
-              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Step
-              </th>
-              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Fixed
-              </th>
-              <th className="px-4 py-2"></th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {components.map((comp) => (
-              <tr key={comp.id}>
-                <td className="px-4 py-2">
-                  <input
-                    type="text"
-                    className="border rounded p-1 w-32"
-                    value={comp.name}
-                    onChange={(e) => updateComponent(comp.id, 'name', e.target.value)}
-                  />
-                </td>
-                <td className="px-4 py-2">
-                  <input
-                    type="text"
-                    className="border rounded p-1 w-16 text-center"
-                    value={comp.group}
-                    onChange={(e) => updateComponent(comp.id, 'group', e.target.value.toUpperCase())}
-                  />
-                </td>
-                <td className="px-4 py-2">
-                  <input
-                    type="number"
-                    className="border rounded p-1 w-20 text-right"
-                    value={comp.min ?? ''}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      updateComponent(comp.id, 'min', val === '' ? null : parseFloat(val));
-                    }}
-                  />
-                </td>
-                <td className="px-4 py-2">
-                  <input
-                    type="number"
-                    className="border rounded p-1 w-20 text-right"
-                    value={comp.max ?? ''}
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      updateComponent(comp.id, 'max', val === '' ? null : parseFloat(val));
-                    }}
-                  />
-                </td>
-                <td className="px-4 py-2">
-                  <input
-                    type="number"
-                    className="border rounded p-1 w-20 text-right"
-                    value={comp.step === null ? '' : comp.step.toFixed(3)}
-                    min={0.001}
-                    max={1}
-                    step={0.01}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      updateComponent(comp.id, 'step', val === '' ? null : parseFloat(val));
-                    }}
-                  />
-                </td>
-                <td className="px-4 py-2">
-                  <input
-                    type="number"
-                    className="border rounded p-1 w-20 text-right"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={comp.fixed ?? ''}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      updateComponent(comp.id, 'fixed', val === '' ? null : parseFloat(val));
-                    }}
-                    placeholder="--"
-                  />
-                </td>
-                <td className="px-4 py-2 text-center">
-                  {components.length > 1 && (
-                    <button
-                      className="text-red-600 hover:text-red-800"
-                      onClick={() => removeComponent(comp.id)}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <button
-        onClick={addComponent}
-        className="flex items-center gap-1 text-blue-600 hover:text-blue-800"
-      >
-        <Plus size={18} /> Add Component
-      </button>
-
-      {/* Group configuration */}
-      <div className="mt-8">
-        <h2 className="text-2xl font-semibold mb-2">Group Constraints</h2>
-        <p className="text-sm text-gray-500 mb-4">
-          Configure mass (0-1 scale) and count constraints for each group. Leave fields blank for no
-          constraint.
-        </p>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Group
-                </th>
-                <th className="px-4 py-2 text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Min Mass
-                </th>
-                <th className="px-4 py-2 text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Max Mass
-                </th>
-                <th className="px-4 py-2 text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Fixed Mass
-                </th>
-                <th className="px-4 py-2 text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Min Count
-                </th>
-                <th className="px-4 py-2 text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Max Count
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {Object.keys(groupConfigs).map((groupName) => {
-                const cfg = groupConfigs[groupName];
-                return (
-                  <tr key={groupName}>
-                    <td className="px-4 py-2 font-medium text-gray-700">{groupName}</td>
-                    <td className="px-4 py-2">
-                      <input
-                        type="number"
-                        className="border rounded p-1 w-24 text-right"
-                        value={cfg.minMass ?? ''}
-                        min={0}
-                        max={1}
-                        step={0.01}
-                        onChange={(e) => updateGroupConfig(groupName, 'minMass', e.target.value)}
-                        placeholder="--"
-                      />
-                    </td>
-                    <td className="px-4 py-2">
-                      <input
-                        type="number"
-                        className="border rounded p-1 w-24 text-right"
-                        value={cfg.maxMass ?? ''}
-                        min={0}
-                        max={1}
-                        step={0.01}
-                        onChange={(e) => updateGroupConfig(groupName, 'maxMass', e.target.value)}
-                        placeholder="--"
-                      />
-                    </td>
-                    <td className="px-4 py-2">
-                      <input
-                        type="number"
-                        className="border rounded p-1 w-24 text-right"
-                        value={cfg.fixedMass ?? ''}
-                        min={0}
-                        max={1}
-                        step={0.01}
-                        onChange={(e) => updateGroupConfig(groupName, 'fixedMass', e.target.value)}
-                        placeholder="--"
-                      />
-                    </td>
-                    <td className="px-4 py-2">
-                      <input
-                        type="number"
-                        className="border rounded p-1 w-24 text-right"
-                        value={cfg.minCount ?? ''}
-                        onChange={(e) => updateGroupConfig(groupName, 'minCount', e.target.value)}
-                        placeholder="--"
-                      />
-                    </td>
-                    <td className="px-4 py-2">
-                      <input
-                        type="number"
-                        className="border rounded p-1 w-24 text-right"
-                        value={cfg.maxCount ?? ''}
-                        onChange={(e) => updateGroupConfig(groupName, 'maxCount', e.target.value)}
-                        placeholder="--"
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
 
       {/* Results */}
-      {results.length > 0 && (
-        <div className="mt-8">
-          <h2 className="text-2xl font-semibold mb-2">Generated Combinations ({results.length})</h2>
-          <div className="overflow-x-auto max-h-96 border rounded">
-            <table className="min-w-full divide-y divide-gray-200 text-sm">
-              <thead className="bg-gray-50 sticky top-0">
-                <tr>
-                  {Object.keys(results[0]).map((header) => (
-                    <th
-                      key={header}
-                      className="px-4 py-2 text-left font-medium text-gray-700 whitespace-nowrap"
-                    >
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {results.map((row, rowIndex) => (
-                  <tr key={rowIndex}>
-                    {Object.keys(row).map((key) => (
-                      <td key={key} className="px-4 py-1 whitespace-nowrap text-right">
-                        {row[key]}
-                      </td>
+        {/* Results */}
+        {results.length > 0 && (
+          <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-6">
+            <h2 className="text-xl font-semibold">
+              Generated Combinations <span className="text-red-300">({results.length})</span>
+            </h2>
+            <div className="mt-4 overflow-x-auto max-h-96 rounded-lg border border-white/10">
+              <table className="min-w-full divide-y divide-white/10 text-sm">
+                <thead className="sticky top-0 bg-neutral-900 text-xs uppercase tracking-wider text-neutral-300">
+                  <tr>
+                    {Object.keys(results[0]).map((header) => (
+                      <th key={header} className="px-4 py-2 text-left">
+                        {header}
+                      </th>
                     ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-white/5 text-neutral-100">
+                  {results.map((row, rowIndex) => (
+                    <tr key={rowIndex} className="hover:bg-white/5">
+                      {Object.keys(row).map((key) => (
+                        <td key={key} className="px-4 py-1 whitespace-nowrap text-right">
+                          {row[key]}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
