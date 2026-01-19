@@ -3,23 +3,25 @@
 import { useState, useCallback, useEffect, useRef, ChangeEvent } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
+type NumericInput = number | string | null;
+
 interface ComponentInput {
   id: string;
   name: string;
   group: string;
-  min: number | null;
-  max: number | null;
-  step: number | null;
-  fixed?: number | null;
+  min: NumericInput;
+  max: NumericInput;
+  step: NumericInput;
+  fixed?: NumericInput;
 }
 
 interface GroupConfig {
   name: string;
-  minMass?: number | null;
-  maxMass?: number | null;
-  fixedMass?: number | null;
-  minCount?: number | null;
-  maxCount?: number | null;
+  minMass?: NumericInput;
+  maxMass?: NumericInput;
+  fixedMass?: NumericInput;
+  minCount?: NumericInput;
+  maxCount?: NumericInput;
 }
 
 interface WorkerProgress {
@@ -58,9 +60,10 @@ export default function CombinationApp() {
   const [results, setResults] = useState<number[][]>([]);
   const [resultsTruncated, setResultsTruncated] = useState<boolean>(false);
   const [exportRowCount, setExportRowCount] = useState<number>(0);
+  const [elapsedMs, setElapsedMs] = useState<number>(0);
   const [isHydrated, setIsHydrated] = useState<boolean>(false);
-  const [minTotal, setMinTotal] = useState<number | null>(0.99);
-  const [maxTotal, setMaxTotal] = useState<number | null>(1.01);
+  const [minTotal, setMinTotal] = useState<NumericInput>(0.99);
+  const [maxTotal, setMaxTotal] = useState<NumericInput>(1.01);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [inputUnit, setInputUnit] = useState<'ratio' | 'percent'>('percent');
   const [resultUnit, setResultUnit] = useState<'ratio' | 'percent'>('ratio');
@@ -68,6 +71,7 @@ export default function CombinationApp() {
   const workersRef = useRef<Worker[]>([]);
   const workerStatsRef = useRef<WorkerProgress[]>([]);
   const csvChunksRef = useRef<string[]>([]);
+  const startTimeRef = useRef<number | null>(null);
 
   const storageKey = 'combinationAppSetup';
   const epsilon = 1e-6;
@@ -77,21 +81,99 @@ export default function CombinationApp() {
     'rounded-md border border-neutral-700 bg-neutral-950/70 px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-red-500/60 focus:border-red-500';
   const inputRight = `${inputBase} text-right`;
   const inputCenter = `${inputBase} text-center`;
-  const formatPercent = (value: number | null) =>
-    value === null || Number.isNaN(value) ? '' : (value * 100).toFixed(1);
-  const parsePercent = (value: string) => (value === '' ? null : Number(value) / 100);
-  const formatInputValue = (value: number | null) =>
-    inputUnit === 'percent' ? formatPercent(value) : value ?? '';
-  const parseInputValue = (value: string) =>
-    inputUnit === 'percent' ? parsePercent(value) : value === '' ? null : Number(value);
-  const shouldAllowInput = (value: string) => value === '' || !Number.isNaN(Number(value));
-  const formatCountValue = (value: number | null | undefined) => value ?? '';
-  const parseCountValue = (value: string) => (value === '' ? null : Number(value));
+  const normalizeDecimal = (value: string) => value.replace(',', '.');
+  const numericInputPattern = /^-?\d*(?:[.,]\d*)?$/;
+  const isIntermediateNumber = (value: string) => /^-?\d*[.,]?$/.test(value);
+  const formatNumberString = (value: number) => (Object.is(value, -0) ? '0' : String(value));
+  const formatInputValue = (value: NumericInput) => {
+    if (value === null || value === undefined || value === '') return '';
+    if (typeof value === 'string') return value;
+    if (inputUnit === 'percent') {
+      return formatNumberString(value * 100);
+    }
+    return formatNumberString(value);
+  };
+  const parseInputValue = (value: string): NumericInput => {
+    if (value === '') return '';
+    if (isIntermediateNumber(value)) return value;
+    if ((value.includes('.') || value.includes(',')) && /[.,]\d*0$/.test(value)) {
+      return value;
+    }
+    const normalized = normalizeDecimal(value);
+    const parsed = Number(normalized);
+    if (Number.isNaN(parsed)) return value;
+    return inputUnit === 'percent' ? parsed / 100 : parsed;
+  };
+  const shouldAllowInput = (value: string) => value === '' || numericInputPattern.test(value);
+  const formatCountValue = (value: NumericInput) => {
+    if (value === null || value === undefined || value === '') return '';
+    if (typeof value === 'string') return value;
+    return formatNumberString(value);
+  };
+  const parseCountValue = (value: string): NumericInput => {
+    if (value === '') return '';
+    if (isIntermediateNumber(value)) return value;
+    if ((value.includes('.') || value.includes(',')) && /[.,]\d*0$/.test(value)) {
+      return value;
+    }
+    const normalized = normalizeDecimal(value);
+    const parsed = Number(normalized);
+    if (Number.isNaN(parsed)) return value;
+    return parsed;
+  };
+  const coerceNumber = (value: NumericInput, unit: 'ratio' | 'percent' = inputUnit) => {
+    if (value === null || value === undefined || value === '') return 0;
+    if (typeof value === 'number') {
+      return Number.isNaN(value) ? 0 : value;
+    }
+    const normalized = normalizeDecimal(value);
+    const parsed = Number(normalized);
+    if (Number.isNaN(parsed)) return 0;
+    return unit === 'percent' ? parsed / 100 : parsed;
+  };
+  const coerceCount = (value: NumericInput) => {
+    if (value === null || value === undefined || value === '') return 0;
+    if (typeof value === 'number') {
+      return Number.isNaN(value) ? 0 : value;
+    }
+    const normalized = normalizeDecimal(value);
+    const parsed = Number(normalized);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+  const coerceOptionalNumber = (value: NumericInput, unit: 'ratio' | 'percent' = inputUnit) => {
+    if (value === null || value === undefined || value === '') return null;
+    if (typeof value === 'number') {
+      return Number.isNaN(value) ? null : value;
+    }
+    const normalized = normalizeDecimal(value);
+    const parsed = Number(normalized);
+    if (Number.isNaN(parsed)) return null;
+    return unit === 'percent' ? parsed / 100 : parsed;
+  };
+  const coerceOptionalCount = (value: NumericInput) => {
+    if (value === null || value === undefined || value === '') return null;
+    if (typeof value === 'number') {
+      return Number.isNaN(value) ? null : value;
+    }
+    const normalized = normalizeDecimal(value);
+    const parsed = Number(normalized);
+    return Number.isNaN(parsed) ? null : parsed;
+  };
+  const coerceStep = (value: NumericInput) => {
+    if (value === null || value === undefined || value === '') return 0.1;
+    const parsed = coerceNumber(value);
+    return parsed;
+  };
   const decimalPlaces = (value: number) => {
     if (!Number.isFinite(value)) return 0;
     const text = value.toString();
     if (!text.includes('.')) return 0;
     return text.split('.')[1].length;
+  };
+  const formatElapsed = (value: number) => {
+    if (!Number.isFinite(value) || value <= 0) return '';
+    if (value < 1000) return `${Math.round(value)} ms`;
+    return `${(value / 1000).toFixed(2)} s`;
   };
 
   useEffect(() => {
@@ -118,7 +200,12 @@ export default function CombinationApp() {
       if (parsed.components && parsed.components.length > 0) {
         const normalized = parsed.components.map((comp) => ({
           ...comp,
-          step: typeof comp.step === 'number' && !Number.isNaN(comp.step) ? comp.step : 0.1,
+          step:
+            comp.step === null || comp.step === undefined
+              ? 0.1
+              : typeof comp.step === 'number' && Number.isNaN(comp.step)
+                ? 0.1
+                : comp.step,
         }));
         setComponents(normalized);
       }
@@ -180,7 +267,7 @@ export default function CombinationApp() {
 
   // Handler for updating component fields
   const updateComponent = useCallback(
-    (id: string, field: keyof ComponentInput, value: string | number | null) => {
+    (id: string, field: keyof ComponentInput, value: NumericInput) => {
       setComponents((prev) =>
         prev.map((c) => (c.id === id ? { ...c, [field]: value } : c))
       );
@@ -190,16 +277,14 @@ export default function CombinationApp() {
 
   // Handler for updating group configuration
   const updateGroupConfig = useCallback(
-    (groupName: string, field: keyof GroupConfig, value: string | number | null) => {
+    (groupName: string, field: keyof GroupConfig, value: NumericInput) => {
       setGroupConfigs((prev) => {
         const updated = { ...prev };
         const current = updated[groupName];
         if (current) {
-          // parse numbers or handle empty strings as null
-          const num = value === '' || value === null ? null : Number(value);
           updated[groupName] = {
             ...current,
-            [field]: isNaN(num) ? null : num,
+            [field]: value,
           };
         }
         return updated;
@@ -292,20 +377,15 @@ export default function CombinationApp() {
   };
 
   const validateInputs = () => {
-    if (minTotal === null || maxTotal === null) {
-      setErrorMessage('Please fill in the total mass bounds before generating.');
-      return false;
-    }
-    if (minTotal > maxTotal) {
+    const minTotalValue = coerceNumber(minTotal);
+    const maxTotalValue = coerceNumber(maxTotal);
+    if (minTotalValue > maxTotalValue) {
       setErrorMessage('Minimum total must be less than or equal to maximum total.');
       return false;
     }
     for (const comp of components) {
-      if (comp.min === null || comp.max === null || comp.step === null) {
-        setErrorMessage('Please fill in all component min/max/step values before generating.');
-        return false;
-      }
-      if (comp.step <= 0) {
+      const stepValue = coerceStep(comp.step);
+      if (stepValue <= 0) {
         setErrorMessage('Step must be greater than 0 for all components.');
         return false;
       }
@@ -334,25 +414,32 @@ export default function CombinationApp() {
     setResults([]);
     setResultsTruncated(false);
     setExportRowCount(0);
+    setElapsedMs(0);
+    startTimeRef.current = performance.now();
     // Build ranges for each component
     const ranges = components.map((comp) => {
       // Determine if fixed value is provided
-      if (comp.fixed !== null && comp.fixed !== undefined && !isNaN(Number(comp.fixed))) {
-        return [Number(comp.fixed)];
+      const fixedValue = coerceOptionalNumber(comp.fixed ?? null);
+      if (fixedValue !== null) {
+        return [fixedValue];
       }
-      const step = comp.step ?? 0.1;
+      const step = coerceStep(comp.step ?? 0.1);
       const scale = Math.pow(
         10,
-        Math.max(decimalPlaces(step), decimalPlaces(comp.min ?? 0), decimalPlaces(comp.max ?? 0))
+        Math.max(
+          decimalPlaces(step),
+          decimalPlaces(coerceNumber(comp.min ?? 0)),
+          decimalPlaces(coerceNumber(comp.max ?? 0))
+        )
       );
-      const start = Math.round((comp.min ?? 0) * scale);
-      const end = Math.round((comp.max ?? 0) * scale);
+      const start = Math.round(coerceNumber(comp.min ?? 0) * scale);
+      const end = Math.round(coerceNumber(comp.max ?? 0) * scale);
       const stepInt = Math.max(1, Math.round(step * scale));
       const vals: number[] = [];
       for (let v = start; v <= end; v += stepInt) {
         vals.push(roundValue(v / scale));
       }
-      return vals.length > 0 ? vals : [roundValue(comp.min ?? 0)];
+      return vals.length > 0 ? vals : [roundValue(coerceNumber(comp.min ?? 0))];
     });
     // Precompute total loops for progress estimation
     const totalLoops = ranges.reduce((acc, arr) => acc * arr.length, 1);
@@ -369,6 +456,20 @@ export default function CombinationApp() {
     const componentNames = componentPayload.map((comp) => comp.name);
     const maxResultsForWorker = Number.MAX_SAFE_INTEGER;
     csvChunksRef.current = [`${componentNames.join(',')}\n`];
+
+    const normalizedGroupConfigs = Object.fromEntries(
+      Object.entries(groupConfigs).map(([name, cfg]) => [
+        name,
+        {
+          ...cfg,
+          minMass: coerceOptionalNumber(cfg.minMass),
+          maxMass: coerceOptionalNumber(cfg.maxMass),
+          fixedMass: coerceOptionalNumber(cfg.fixedMass),
+          minCount: coerceOptionalCount(cfg.minCount),
+          maxCount: coerceOptionalCount(cfg.maxCount),
+        },
+      ])
+    );
 
     workerStatsRef.current = Array.from({ length: nextWorkerCount }, () => ({
       processed: 0,
@@ -439,6 +540,9 @@ export default function CombinationApp() {
           activeWorkers -= 1;
           worker.terminate();
           if (activeWorkers <= 0) {
+            if (startTimeRef.current !== null) {
+              setElapsedMs(performance.now() - startTimeRef.current);
+            }
             setGenerating(false);
             setProgress(100);
           }
@@ -450,9 +554,9 @@ export default function CombinationApp() {
         type: 'start',
         payload: {
           components: componentPayload,
-          groupConfigs,
-          minTotal: minTotal ?? 0,
-          maxTotal: maxTotal ?? 0,
+          groupConfigs: normalizedGroupConfigs,
+          minTotal: coerceNumber(minTotal),
+          maxTotal: coerceNumber(maxTotal),
           ranges,
           firstValues: subset,
           epsilon,
@@ -857,6 +961,11 @@ export default function CombinationApp() {
                   {resultsTruncated ? ` of ${validCount.toLocaleString()}` : ''})
                 </span>
               </h2>
+              {elapsedMs > 0 && (
+                <span className="text-sm text-neutral-300">
+                  Time: <span className="text-white">{formatElapsed(elapsedMs)}</span>
+                </span>
+              )}
               <div className="flex items-center gap-2 text-sm text-neutral-300">
                 <span>Display</span>
                 <div className="flex rounded-full border border-white/10 bg-white/5 p-1">
