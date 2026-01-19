@@ -7,9 +7,9 @@ interface ComponentInput {
   id: string;
   name: string;
   group: string;
-  min: number;
-  max: number;
-  step: number;
+  min: number | null;
+  max: number | null;
+  step: number | null;
   fixed?: number | null;
 }
 
@@ -51,10 +51,19 @@ export default function CombinationApp() {
   const [progress, setProgress] = useState<number>(0);
   const [results, setResults] = useState<ResultRow[]>([]);
   const [isHydrated, setIsHydrated] = useState<boolean>(false);
+  const [minTotal, setMinTotal] = useState<number | null>(0.99);
+  const [maxTotal, setMaxTotal] = useState<number | null>(1.1);
+  const [errorMessage, setErrorMessage] = useState<string>('');
 
   const storageKey = 'combinationAppSetup';
-  const epsilon = 1e-9;
+  const epsilon = 1e-6;
   const roundValue = (value: number) => Number(value.toFixed(6));
+  const decimalPlaces = (value: number) => {
+    if (!Number.isFinite(value)) return 0;
+    const text = value.toString();
+    if (!text.includes('.')) return 0;
+    return text.split('.')[1].length;
+  };
 
   useEffect(() => {
     const stored = window.localStorage.getItem(storageKey);
@@ -66,6 +75,8 @@ export default function CombinationApp() {
       const parsed = JSON.parse(stored) as {
         components?: ComponentInput[];
         groupConfigs?: Record<string, GroupConfig>;
+        minTotal?: number | null;
+        maxTotal?: number | null;
       };
       if (parsed.components && parsed.components.length > 0) {
         const normalized = parsed.components.map((comp) => ({
@@ -76,6 +87,12 @@ export default function CombinationApp() {
       }
       if (parsed.groupConfigs && Object.keys(parsed.groupConfigs).length > 0) {
         setGroupConfigs(parsed.groupConfigs);
+      }
+      if (parsed.minTotal !== undefined) {
+        setMinTotal(parsed.minTotal);
+      }
+      if (parsed.maxTotal !== undefined) {
+        setMaxTotal(parsed.maxTotal);
       }
     } catch (error) {
       console.warn('Failed to load setup from localStorage.', error);
@@ -114,13 +131,15 @@ export default function CombinationApp() {
     const payload = {
       components,
       groupConfigs,
+      minTotal,
+      maxTotal,
     };
     window.localStorage.setItem(storageKey, JSON.stringify(payload));
-  }, [components, groupConfigs, isHydrated]);
+  }, [components, groupConfigs, isHydrated, minTotal, maxTotal]);
 
   // Handler for updating component fields
   const updateComponent = useCallback(
-    (id: string, field: keyof ComponentInput, value: string | number) => {
+    (id: string, field: keyof ComponentInput, value: string | number | null) => {
       setComponents((prev) =>
         prev.map((c) => (c.id === id ? { ...c, [field]: value } : c))
       );
@@ -170,8 +189,32 @@ export default function CombinationApp() {
     setComponents((prev) => prev.filter((c) => c.id !== id));
   };
 
+  const validateInputs = () => {
+    if (minTotal === null || maxTotal === null) {
+      setErrorMessage('Please fill in the total mass bounds before generating.');
+      return false;
+    }
+    if (minTotal > maxTotal) {
+      setErrorMessage('Minimum total must be less than or equal to maximum total.');
+      return false;
+    }
+    for (const comp of components) {
+      if (comp.min === null || comp.max === null || comp.step === null) {
+        setErrorMessage('Please fill in all component min/max/step values before generating.');
+        return false;
+      }
+      if (comp.step <= 0) {
+        setErrorMessage('Step must be greater than 0 for all components.');
+        return false;
+      }
+    }
+    setErrorMessage('');
+    return true;
+  };
+
   // Generate combinations based on current state
   const generateCombinations = async () => {
+    if (!validateInputs()) return;
     setGenerating(true);
     setProgress(0);
     setResults([]);
@@ -181,11 +224,19 @@ export default function CombinationApp() {
       if (comp.fixed !== null && comp.fixed !== undefined && !isNaN(Number(comp.fixed))) {
         return [Number(comp.fixed)];
       }
+      const step = comp.step ?? 0.1;
+      const scale = Math.pow(
+        10,
+        Math.max(decimalPlaces(step), decimalPlaces(comp.min ?? 0), decimalPlaces(comp.max ?? 0))
+      );
+      const start = Math.round((comp.min ?? 0) * scale);
+      const end = Math.round((comp.max ?? 0) * scale);
+      const stepInt = Math.max(1, Math.round(step * scale));
       const vals: number[] = [];
-      for (let v = comp.min; v <= comp.max + epsilon; v += comp.step) {
-        vals.push(roundValue(v));
+      for (let v = start; v <= end; v += stepInt) {
+        vals.push(roundValue(v / scale));
       }
-      return vals;
+      return vals.length > 0 ? vals : [roundValue(comp.min ?? 0)];
     });
     // Precompute total loops for progress estimation
     const totalLoops = ranges.reduce((acc, arr) => acc * arr.length, 1);
@@ -201,8 +252,8 @@ export default function CombinationApp() {
       currentSum: number
     ) => {
       if (index === components.length) {
-        // At leaf: check if total sum equals 1
-        if (Math.abs(currentSum - 1) <= epsilon) {
+        // At leaf: allow totals within bounds
+        if (currentSum >= (minTotal ?? 0) - epsilon && currentSum <= (maxTotal ?? 0) + epsilon) {
           // Check group-level min/fixed requirements
           let valid = true;
           for (const group of groupNames) {
@@ -227,6 +278,18 @@ export default function CombinationApp() {
                 break;
               }
             }
+            if (cfg.maxMass !== null && cfg.maxMass !== undefined) {
+              if (mass > cfg.maxMass + epsilon) {
+                valid = false;
+                break;
+              }
+            }
+            if (cfg.maxCount !== null && cfg.maxCount !== undefined) {
+              if (cnt > cfg.maxCount) {
+                valid = false;
+                break;
+              }
+            }
           }
           if (valid) {
             const row: ResultRow = {};
@@ -247,8 +310,8 @@ export default function CombinationApp() {
           setProgress(Math.min(100, (loopCounter / totalLoops) * 100));
         }
         const newSum = roundValue(currentSum + val);
-        // Early skip if sum exceeds 1
-        if (newSum > 1 + epsilon) continue;
+        // Early skip if sum exceeds max total
+        if (newSum > (maxTotal ?? 0) + epsilon) continue;
         // Copy groupMassSums and groupCounts to avoid mutation
         const gm = { ...groupMassSums };
         const gc = { ...groupCounts };
@@ -302,8 +365,46 @@ export default function CombinationApp() {
 
   return (
     <div className="container mx-auto max-w-5xl p-4 space-y-6">
+      {errorMessage && (
+        <div className="rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+          {errorMessage}
+        </div>
+      )}
       <h1 className="text-3xl font-bold">Formula Combination Generator</h1>
-      <div className="flex flex-col md:flex-row gap-4 items-center">
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col md:flex-row gap-4 items-center">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-gray-700">Total bounds</span>
+            <input
+              type="number"
+              className="border rounded p-1 w-24 text-right"
+              value={minTotal ?? ''}
+              min={0}
+              max={1.5}
+              step={0.01}
+              onChange={(e) => {
+                const val = e.target.value;
+                setMinTotal(val === '' ? null : parseFloat(val));
+              }}
+              placeholder="Min"
+            />
+            <span className="text-sm text-gray-500">to</span>
+            <input
+              type="number"
+              className="border rounded p-1 w-24 text-right"
+              value={maxTotal ?? ''}
+              min={0}
+              max={1.5}
+              step={0.01}
+              onChange={(e) => {
+                const val = e.target.value;
+                setMaxTotal(val === '' ? null : parseFloat(val));
+              }}
+              placeholder="Max"
+            />
+          </div>
+        </div>
+        <div className="flex flex-col md:flex-row gap-4 items-center">
         <button
           onClick={generateCombinations}
           disabled={generating}
@@ -319,6 +420,7 @@ export default function CombinationApp() {
             Export CSV
           </button>
         )}
+        </div>
       </div>
       {/* Progress bar */}
       {generating && (
@@ -378,35 +480,42 @@ export default function CombinationApp() {
                   <input
                     type="number"
                     className="border rounded p-1 w-20 text-right"
-                    value={comp.min}
+                    value={comp.min ?? ''}
                     min={0}
                     max={1}
                     step={0.01}
-                    onChange={(e) => updateComponent(comp.id, 'min', parseFloat(e.target.value) || 0)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      updateComponent(comp.id, 'min', val === '' ? null : parseFloat(val));
+                    }}
                   />
                 </td>
                 <td className="px-4 py-2">
                   <input
                     type="number"
                     className="border rounded p-1 w-20 text-right"
-                    value={comp.max}
+                    value={comp.max ?? ''}
                     min={0}
                     max={1}
                     step={0.01}
-                    onChange={(e) => updateComponent(comp.id, 'max', parseFloat(e.target.value) || 0)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      updateComponent(comp.id, 'max', val === '' ? null : parseFloat(val));
+                    }}
                   />
                 </td>
                 <td className="px-4 py-2">
                   <input
                     type="number"
                     className="border rounded p-1 w-20 text-right"
-                    value={comp.step}
-                    min={0.01}
+                    value={comp.step === null ? '' : comp.step.toFixed(3)}
+                    min={0.001}
                     max={1}
                     step={0.01}
-                    onChange={(e) =>
-                      updateComponent(comp.id, 'step', parseFloat(e.target.value) || 0.01)
-                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      updateComponent(comp.id, 'step', val === '' ? null : parseFloat(val));
+                    }}
                   />
                 </td>
                 <td className="px-4 py-2">
