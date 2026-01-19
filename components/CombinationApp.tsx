@@ -22,8 +22,9 @@ interface GroupConfig {
   maxCount?: number | null;
 }
 
-interface ResultRow {
-  [key: string]: number;
+interface WorkerProgress {
+  processed: number;
+  valid: number;
 }
 
 // Utility to generate a random id
@@ -49,7 +50,14 @@ export default function CombinationApp() {
   // Generation state
   const [generating, setGenerating] = useState<boolean>(false);
   const [progress, setProgress] = useState<number>(0);
-  const [results, setResults] = useState<ResultRow[]>([]);
+  const [processedCount, setProcessedCount] = useState<number>(0);
+  const [validCount, setValidCount] = useState<number>(0);
+  const [totalCombinations, setTotalCombinations] = useState<number>(0);
+  const [workerCount, setWorkerCount] = useState<number>(0);
+  const [maxWorkerCapacity, setMaxWorkerCapacity] = useState<number>(0);
+  const [results, setResults] = useState<number[][]>([]);
+  const [resultsTruncated, setResultsTruncated] = useState<boolean>(false);
+  const [exportRowCount, setExportRowCount] = useState<number>(0);
   const [isHydrated, setIsHydrated] = useState<boolean>(false);
   const [minTotal, setMinTotal] = useState<number | null>(0.99);
   const [maxTotal, setMaxTotal] = useState<number | null>(1.01);
@@ -57,9 +65,13 @@ export default function CombinationApp() {
   const [inputUnit, setInputUnit] = useState<'ratio' | 'percent'>('percent');
   const [resultUnit, setResultUnit] = useState<'ratio' | 'percent'>('ratio');
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const workersRef = useRef<Worker[]>([]);
+  const workerStatsRef = useRef<WorkerProgress[]>([]);
+  const csvChunksRef = useRef<string[]>([]);
 
   const storageKey = 'combinationAppSetup';
   const epsilon = 1e-6;
+  const displayLimit = 50000;
   const roundValue = (value: number) => Number(value.toFixed(6));
   const inputBase =
     'rounded-md border border-neutral-700 bg-neutral-950/70 px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-red-500/60 focus:border-red-500';
@@ -81,6 +93,13 @@ export default function CombinationApp() {
     if (!text.includes('.')) return 0;
     return text.split('.')[1].length;
   };
+
+  useEffect(() => {
+    return () => {
+      workersRef.current.forEach((worker) => worker.terminate());
+      workersRef.current = [];
+    };
+  }, []);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(storageKey);
@@ -295,12 +314,26 @@ export default function CombinationApp() {
     return true;
   };
 
+  const stopActiveWorkers = () => {
+    workersRef.current.forEach((worker) => {
+      worker.postMessage({ type: 'stop' });
+      worker.terminate();
+    });
+    workersRef.current = [];
+    workerStatsRef.current = [];
+  };
+
   // Generate combinations based on current state
   const generateCombinations = async () => {
     if (!validateInputs()) return;
+    stopActiveWorkers();
     setGenerating(true);
     setProgress(0);
+    setProcessedCount(0);
+    setValidCount(0);
     setResults([]);
+    setResultsTruncated(false);
+    setExportRowCount(0);
     // Build ranges for each component
     const ranges = components.map((comp) => {
       // Determine if fixed value is provided
@@ -323,120 +356,118 @@ export default function CombinationApp() {
     });
     // Precompute total loops for progress estimation
     const totalLoops = ranges.reduce((acc, arr) => acc * arr.length, 1);
-    let loopCounter = 0;
-    const groupNames = Object.keys(groupConfigs);
-    // Helper to recursively build combinations
-    const resultsTemp: ResultRow[] = [];
-    const helper = (
-      index: number,
-      currentValues: number[],
-      groupMassSums: Record<string, number>,
-      groupCounts: Record<string, number>,
-      currentSum: number
-    ) => {
-      if (index === components.length) {
-        // At leaf: allow totals within bounds
-        if (currentSum >= (minTotal ?? 0) - epsilon && currentSum <= (maxTotal ?? 0) + epsilon) {
-          // Check group-level min/fixed requirements
-          let valid = true;
-          for (const group of groupNames) {
-            const cfg = groupConfigs[group];
-            const mass = groupMassSums[group] ?? 0;
-            const cnt = groupCounts[group] ?? 0;
-            if (cfg.fixedMass !== null && cfg.fixedMass !== undefined) {
-              if (Math.abs(mass - cfg.fixedMass) > epsilon) {
-                valid = false;
-                break;
-              }
-            }
-            if (cfg.minMass !== null && cfg.minMass !== undefined) {
-              if (mass < cfg.minMass - epsilon) {
-                valid = false;
-                break;
-              }
-            }
-            if (cfg.minCount !== null && cfg.minCount !== undefined) {
-              if (cnt < cfg.minCount) {
-                valid = false;
-                break;
-              }
-            }
-            if (cfg.maxMass !== null && cfg.maxMass !== undefined) {
-              if (mass > cfg.maxMass + epsilon) {
-                valid = false;
-                break;
-              }
-            }
-            if (cfg.maxCount !== null && cfg.maxCount !== undefined) {
-              if (cnt > cfg.maxCount) {
-                valid = false;
-                break;
-              }
-            }
-          }
-          if (valid) {
-            const row: ResultRow = {};
-            components.forEach((comp, i) => {
-              row[comp.name] = currentValues[i];
-            });
-            resultsTemp.push(row);
-          }
-        }
-        return;
-      }
-      const comp = components[index];
-      const group = comp.group;
-      for (const val of ranges[index]) {
-        loopCounter++;
-        // Update progress occasionally
-        if (loopCounter % 100 === 0) {
-          setProgress(Math.min(100, (loopCounter / totalLoops) * 100));
-        }
-        const newSum = roundValue(currentSum + val);
-        // Early skip if sum exceeds max total
-        if (newSum > (maxTotal ?? 0) + epsilon) continue;
-        // Copy groupMassSums and groupCounts to avoid mutation
-        const gm = { ...groupMassSums };
-        const gc = { ...groupCounts };
-        // Update group metrics if value is non-zero
-        if (val > 0) {
-          gm[group] = (gm[group] ?? 0) + val;
-          gc[group] = (gc[group] ?? 0) + 1;
-        }
-        const cfg = groupConfigs[group];
-        // Check maxMass and fixedMass early
-        if (cfg.fixedMass !== null && cfg.fixedMass !== undefined) {
-          if (gm[group] > cfg.fixedMass + epsilon) continue;
-        }
-        if (cfg.maxMass !== null && cfg.maxMass !== undefined) {
-          if (gm[group] > cfg.maxMass + epsilon) continue;
-        }
-        // Check maxCount
-        if (cfg.maxCount !== null && cfg.maxCount !== undefined) {
-          if (gc[group] > cfg.maxCount) continue;
-        }
-        helper(index + 1, [...currentValues, val], gm, gc, newSum);
+    setTotalCombinations(totalLoops);
+
+    const maxAvailableWorkers = Math.max(1, navigator.hardwareConcurrency ?? 4);
+    setMaxWorkerCapacity(maxAvailableWorkers);
+    const firstRange = ranges[0] ?? [];
+    const nextWorkerCount = Math.max(1, Math.min(maxAvailableWorkers, firstRange.length || 1));
+    setWorkerCount(nextWorkerCount);
+
+    const chunkSize = Math.ceil(firstRange.length / nextWorkerCount);
+    const componentPayload = components.map((comp) => ({ name: comp.name, group: comp.group }));
+    const componentNames = componentPayload.map((comp) => comp.name);
+    const maxResultsForWorker = Number.MAX_SAFE_INTEGER;
+    csvChunksRef.current = [`${componentNames.join(',')}\n`];
+
+    workerStatsRef.current = Array.from({ length: nextWorkerCount }, () => ({
+      processed: 0,
+      valid: 0,
+    }));
+
+    const totalizeStats = () => {
+      const totals = workerStatsRef.current.reduce(
+        (acc, stat) => {
+          acc.processed += stat.processed;
+          acc.valid += stat.valid;
+          return acc;
+        },
+        { processed: 0, valid: 0 }
+      );
+      setProcessedCount(totals.processed);
+      setValidCount(totals.valid);
+      const percent = totalLoops > 0 ? Math.min(100, (totals.processed / totalLoops) * 100) : 0;
+      setProgress(percent);
+      if (totals.valid > displayLimit) {
+        setResultsTruncated(true);
       }
     };
-    helper(0, [], {}, {}, 0);
-    // After generation
-    setProgress(100);
-    setResults(resultsTemp);
-    setGenerating(false);
+
+    let activeWorkers = nextWorkerCount;
+
+    workersRef.current = Array.from({ length: nextWorkerCount }, (_, workerId) => {
+      const worker = new Worker(new URL('./workers/combinationWorker.ts', import.meta.url), {
+        type: 'module',
+      });
+      worker.onmessage = (event) => {
+        const { type, processed, valid, rows, rowCount, workerId: id } = event.data || {};
+        if (typeof id !== 'number') return;
+        if (type === 'progress') {
+          workerStatsRef.current[id] = { processed, valid };
+          totalizeStats();
+        }
+        if (type === 'results' && rows instanceof Float64Array && typeof rowCount === 'number') {
+          const lines: string[] = [];
+          for (let i = 0; i < rowCount; i += 1) {
+            const start = i * componentNames.length;
+            const values = [];
+            for (let j = 0; j < componentNames.length; j += 1) {
+              values.push(String(rows[start + j] ?? ''));
+            }
+            lines.push(values.join(','));
+          }
+          if (lines.length > 0) {
+            csvChunksRef.current.push(`${lines.join('\n')}\n`);
+          }
+          setExportRowCount((prev) => prev + rowCount);
+          setResults((prev) => {
+            if (prev.length >= displayLimit) return prev;
+            const remaining = displayLimit - prev.length;
+            const take = Math.min(remaining, rowCount);
+            const nextRows: number[][] = [];
+            for (let i = 0; i < take; i += 1) {
+              const start = i * componentNames.length;
+              const row = Array.from(rows.slice(start, start + componentNames.length));
+              nextRows.push(row);
+            }
+            return [...prev, ...nextRows];
+          });
+        }
+        if (type === 'done') {
+          workerStatsRef.current[id] = { processed, valid };
+          totalizeStats();
+          activeWorkers -= 1;
+          worker.terminate();
+          if (activeWorkers <= 0) {
+            setGenerating(false);
+            setProgress(100);
+          }
+        }
+      };
+      const startIndex = workerId * chunkSize;
+      const subset = firstRange.slice(startIndex, startIndex + chunkSize);
+      worker.postMessage({
+        type: 'start',
+        payload: {
+          components: componentPayload,
+          groupConfigs,
+          minTotal: minTotal ?? 0,
+          maxTotal: maxTotal ?? 0,
+          ranges,
+          firstValues: subset,
+          epsilon,
+          maxResults: maxResultsForWorker,
+          workerId,
+        },
+      });
+      return worker;
+    });
   };
 
   // Export results to CSV
   const exportCSV = () => {
-    if (results.length === 0) return;
-    const headers = Object.keys(results[0]);
-    const lines = [];
-    lines.push(headers.join(','));
-    results.forEach((row) => {
-      const vals = headers.map((h) => String(row[h] ?? ''));
-      lines.push(vals.join(','));
-    });
-    const csvContent = lines.join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    if (csvChunksRef.current.length === 0 || exportRowCount === 0) return;
+    const blob = new Blob(csvChunksRef.current, { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -444,6 +475,7 @@ export default function CombinationApp() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -793,7 +825,13 @@ export default function CombinationApp() {
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-sm text-red-200">
               <span className="inline-flex h-3 w-3 animate-ping rounded-full bg-red-400 opacity-70"></span>
-              <span>Calculating combinations… {progress.toFixed(1)}%</span>
+              <span>
+                Calculating combinations… {processedCount.toLocaleString()} checked
+                {totalCombinations > 0
+                  ? ` / ${totalCombinations.toLocaleString()}`
+                  : ''}{' '}
+                · {validCount.toLocaleString()} valid · {workerCount} of {maxWorkerCapacity} workers
+              </span>
             </div>
             <div className="w-full overflow-hidden rounded-full bg-white/10">
               <div
@@ -801,6 +839,10 @@ export default function CombinationApp() {
                 style={{ width: `${progress}%` }}
               ></div>
             </div>
+            <p className="text-xs text-neutral-400">
+              The table displays up to {displayLimit.toLocaleString()} rows to keep the UI fast.
+              CSV export includes all {exportRowCount.toLocaleString()} generated combinations.
+            </p>
           </div>
         )}
 
@@ -809,7 +851,11 @@ export default function CombinationApp() {
           <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-xl font-semibold">
-                Generated Combinations <span className="text-red-300">({results.length})</span>
+                Generated Combinations{' '}
+                <span className="text-red-300">
+                  ({results.length.toLocaleString()}
+                  {resultsTruncated ? ` of ${validCount.toLocaleString()}` : ''})
+                </span>
               </h2>
               <div className="flex items-center gap-2 text-sm text-neutral-300">
                 <span>Display</span>
@@ -839,13 +885,19 @@ export default function CombinationApp() {
                 </div>
               </div>
             </div>
+            {resultsTruncated && (
+              <p className="mt-2 text-xs text-neutral-400">
+                Showing the first {displayLimit.toLocaleString()} results for readability. Export to
+                CSV to download the full set.
+              </p>
+            )}
             <div className="mt-4 overflow-x-auto max-h-96 rounded-lg border border-white/10">
               <table className="min-w-full divide-y divide-white/10 text-sm">
                 <thead className="sticky top-0 bg-neutral-900 text-xs uppercase tracking-wider text-neutral-300">
                   <tr>
-                    {Object.keys(results[0]).map((header) => (
-                      <th key={header} className="px-4 py-2 text-left">
-                        {header}
+                    {components.map((comp) => (
+                      <th key={comp.id} className="px-4 py-2 text-left">
+                        {comp.name}
                       </th>
                     ))}
                   </tr>
@@ -853,11 +905,11 @@ export default function CombinationApp() {
                 <tbody className="divide-y divide-white/5 text-neutral-100">
                   {results.map((row, rowIndex) => (
                     <tr key={rowIndex} className="hover:bg-white/5">
-                      {Object.keys(row).map((key) => (
-                        <td key={key} className="px-4 py-1 whitespace-nowrap text-right">
+                      {row.map((value, index) => (
+                        <td key={`${rowIndex}-${index}`} className="px-4 py-1 whitespace-nowrap text-right">
                           {resultUnit === 'percent'
-                            ? `${(row[key] * 100).toFixed(1)}%`
-                            : row[key]}
+                            ? `${(value * 100).toFixed(1)}%`
+                            : value}
                         </td>
                       ))}
                     </tr>
