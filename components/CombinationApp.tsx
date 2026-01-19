@@ -26,6 +26,11 @@ interface ResultRow {
   [key: string]: number;
 }
 
+interface WorkerProgress {
+  processed: number;
+  valid: number;
+}
+
 // Utility to generate a random id
 const uid = () => Math.random().toString(36).substring(2, 9);
 
@@ -49,7 +54,13 @@ export default function CombinationApp() {
   // Generation state
   const [generating, setGenerating] = useState<boolean>(false);
   const [progress, setProgress] = useState<number>(0);
+  const [processedCount, setProcessedCount] = useState<number>(0);
+  const [validCount, setValidCount] = useState<number>(0);
+  const [totalCombinations, setTotalCombinations] = useState<number>(0);
+  const [workerCount, setWorkerCount] = useState<number>(0);
+  const [maxWorkerCapacity, setMaxWorkerCapacity] = useState<number>(0);
   const [results, setResults] = useState<ResultRow[]>([]);
+  const [resultsTruncated, setResultsTruncated] = useState<boolean>(false);
   const [isHydrated, setIsHydrated] = useState<boolean>(false);
   const [minTotal, setMinTotal] = useState<number | null>(0.99);
   const [maxTotal, setMaxTotal] = useState<number | null>(1.01);
@@ -57,9 +68,13 @@ export default function CombinationApp() {
   const [inputUnit, setInputUnit] = useState<'ratio' | 'percent'>('percent');
   const [resultUnit, setResultUnit] = useState<'ratio' | 'percent'>('ratio');
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const workerUrlRef = useRef<string | null>(null);
+  const workersRef = useRef<Worker[]>([]);
+  const workerStatsRef = useRef<WorkerProgress[]>([]);
 
   const storageKey = 'combinationAppSetup';
   const epsilon = 1e-6;
+  const maxResults = 50000;
   const roundValue = (value: number) => Number(value.toFixed(6));
   const inputBase =
     'rounded-md border border-neutral-700 bg-neutral-950/70 px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-red-500/60 focus:border-red-500';
@@ -81,6 +96,172 @@ export default function CombinationApp() {
     if (!text.includes('.')) return 0;
     return text.split('.')[1].length;
   };
+
+  const getWorkerUrl = useCallback(() => {
+    if (workerUrlRef.current) return workerUrlRef.current;
+    const workerScript = `
+      let stopRequested = false;
+      const roundValue = (value) => Number(value.toFixed(6));
+      self.onmessage = (event) => {
+        const { type, payload } = event.data || {};
+        if (type === 'stop') {
+          stopRequested = true;
+          return;
+        }
+        if (type !== 'start' || !payload) return;
+        stopRequested = false;
+        const {
+          components,
+          groupConfigs,
+          minTotal,
+          maxTotal,
+          ranges,
+          firstValues,
+          epsilon,
+          maxResults,
+          workerId
+        } = payload;
+        const groupNames = Object.keys(groupConfigs);
+        let processed = 0;
+        let valid = 0;
+        let stored = 0;
+        let resultsChunk = [];
+
+        const postProgress = () => {
+          self.postMessage({ type: 'progress', workerId, processed, valid });
+        };
+        const flushResults = () => {
+          if (resultsChunk.length > 0) {
+            self.postMessage({ type: 'results', workerId, results: resultsChunk });
+            resultsChunk = [];
+          }
+        };
+
+        const helper = (
+          index,
+          currentValues,
+          groupMassSums,
+          groupCounts,
+          currentSum
+        ) => {
+          if (stopRequested) return;
+          if (index === components.length) {
+            processed += 1;
+            if (processed % 5000 === 0) {
+              postProgress();
+            }
+            if (currentSum >= minTotal - epsilon && currentSum <= maxTotal + epsilon) {
+              let validRow = true;
+              for (const group of groupNames) {
+                const cfg = groupConfigs[group];
+                const mass = groupMassSums[group] || 0;
+                const cnt = groupCounts[group] || 0;
+                if (cfg.fixedMass !== null && cfg.fixedMass !== undefined) {
+                  if (Math.abs(mass - cfg.fixedMass) > epsilon) {
+                    validRow = false;
+                    break;
+                  }
+                }
+                if (cfg.minMass !== null && cfg.minMass !== undefined) {
+                  if (mass < cfg.minMass - epsilon) {
+                    validRow = false;
+                    break;
+                  }
+                }
+                if (cfg.minCount !== null && cfg.minCount !== undefined) {
+                  if (cnt < cfg.minCount) {
+                    validRow = false;
+                    break;
+                  }
+                }
+                if (cfg.maxMass !== null && cfg.maxMass !== undefined) {
+                  if (mass > cfg.maxMass + epsilon) {
+                    validRow = false;
+                    break;
+                  }
+                }
+                if (cfg.maxCount !== null && cfg.maxCount !== undefined) {
+                  if (cnt > cfg.maxCount) {
+                    validRow = false;
+                    break;
+                  }
+                }
+              }
+              if (validRow) {
+                valid += 1;
+                if (stored < maxResults) {
+                  resultsChunk.push([...currentValues]);
+                  stored += 1;
+                  if (resultsChunk.length >= 200) {
+                    flushResults();
+                  }
+                }
+              }
+            }
+            return;
+          }
+          const comp = components[index];
+          const group = comp.group;
+          for (const val of ranges[index]) {
+            if (stopRequested) return;
+            const newSum = roundValue(currentSum + val);
+            if (newSum > maxTotal + epsilon) continue;
+            const gm = { ...groupMassSums };
+            const gc = { ...groupCounts };
+            if (val > 0) {
+              gm[group] = (gm[group] || 0) + val;
+              gc[group] = (gc[group] || 0) + 1;
+            }
+            const cfg = groupConfigs[group];
+            if (cfg.fixedMass !== null && cfg.fixedMass !== undefined) {
+              if (gm[group] > cfg.fixedMass + epsilon) continue;
+            }
+            if (cfg.maxMass !== null && cfg.maxMass !== undefined) {
+              if (gm[group] > cfg.maxMass + epsilon) continue;
+            }
+            if (cfg.maxCount !== null && cfg.maxCount !== undefined) {
+              if (gc[group] > cfg.maxCount) continue;
+            }
+            helper(index + 1, [...currentValues, val], gm, gc, newSum);
+          }
+        };
+
+        for (const firstVal of firstValues) {
+          if (stopRequested) break;
+          const firstGroup = components[0].group;
+          const initialMass = {};
+          const initialCount = {};
+          let sum = roundValue(firstVal);
+          if (firstVal > 0) {
+            initialMass[firstGroup] = firstVal;
+            initialCount[firstGroup] = 1;
+          }
+          if (sum > maxTotal + epsilon) {
+            processed += ranges.slice(1).reduce((acc, arr) => acc * arr.length, 1);
+            continue;
+          }
+          helper(1, [firstVal], initialMass, initialCount, sum);
+        }
+
+        postProgress();
+        flushResults();
+        self.postMessage({ type: 'done', workerId, processed, valid, stored });
+      };
+    `;
+    const url = URL.createObjectURL(new Blob([workerScript], { type: 'application/javascript' }));
+    workerUrlRef.current = url;
+    return url;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      workersRef.current.forEach((worker) => worker.terminate());
+      workersRef.current = [];
+      if (workerUrlRef.current) {
+        URL.revokeObjectURL(workerUrlRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(storageKey);
@@ -295,12 +476,25 @@ export default function CombinationApp() {
     return true;
   };
 
+  const stopActiveWorkers = () => {
+    workersRef.current.forEach((worker) => {
+      worker.postMessage({ type: 'stop' });
+      worker.terminate();
+    });
+    workersRef.current = [];
+    workerStatsRef.current = [];
+  };
+
   // Generate combinations based on current state
   const generateCombinations = async () => {
     if (!validateInputs()) return;
+    stopActiveWorkers();
     setGenerating(true);
     setProgress(0);
+    setProcessedCount(0);
+    setValidCount(0);
     setResults([]);
+    setResultsTruncated(false);
     // Build ranges for each component
     const ranges = components.map((comp) => {
       // Determine if fixed value is provided
@@ -323,106 +517,96 @@ export default function CombinationApp() {
     });
     // Precompute total loops for progress estimation
     const totalLoops = ranges.reduce((acc, arr) => acc * arr.length, 1);
-    let loopCounter = 0;
-    const groupNames = Object.keys(groupConfigs);
-    // Helper to recursively build combinations
-    const resultsTemp: ResultRow[] = [];
-    const helper = (
-      index: number,
-      currentValues: number[],
-      groupMassSums: Record<string, number>,
-      groupCounts: Record<string, number>,
-      currentSum: number
-    ) => {
-      if (index === components.length) {
-        // At leaf: allow totals within bounds
-        if (currentSum >= (minTotal ?? 0) - epsilon && currentSum <= (maxTotal ?? 0) + epsilon) {
-          // Check group-level min/fixed requirements
-          let valid = true;
-          for (const group of groupNames) {
-            const cfg = groupConfigs[group];
-            const mass = groupMassSums[group] ?? 0;
-            const cnt = groupCounts[group] ?? 0;
-            if (cfg.fixedMass !== null && cfg.fixedMass !== undefined) {
-              if (Math.abs(mass - cfg.fixedMass) > epsilon) {
-                valid = false;
-                break;
-              }
-            }
-            if (cfg.minMass !== null && cfg.minMass !== undefined) {
-              if (mass < cfg.minMass - epsilon) {
-                valid = false;
-                break;
-              }
-            }
-            if (cfg.minCount !== null && cfg.minCount !== undefined) {
-              if (cnt < cfg.minCount) {
-                valid = false;
-                break;
-              }
-            }
-            if (cfg.maxMass !== null && cfg.maxMass !== undefined) {
-              if (mass > cfg.maxMass + epsilon) {
-                valid = false;
-                break;
-              }
-            }
-            if (cfg.maxCount !== null && cfg.maxCount !== undefined) {
-              if (cnt > cfg.maxCount) {
-                valid = false;
-                break;
-              }
-            }
-          }
-          if (valid) {
-            const row: ResultRow = {};
-            components.forEach((comp, i) => {
-              row[comp.name] = currentValues[i];
-            });
-            resultsTemp.push(row);
-          }
-        }
-        return;
-      }
-      const comp = components[index];
-      const group = comp.group;
-      for (const val of ranges[index]) {
-        loopCounter++;
-        // Update progress occasionally
-        if (loopCounter % 100 === 0) {
-          setProgress(Math.min(100, (loopCounter / totalLoops) * 100));
-        }
-        const newSum = roundValue(currentSum + val);
-        // Early skip if sum exceeds max total
-        if (newSum > (maxTotal ?? 0) + epsilon) continue;
-        // Copy groupMassSums and groupCounts to avoid mutation
-        const gm = { ...groupMassSums };
-        const gc = { ...groupCounts };
-        // Update group metrics if value is non-zero
-        if (val > 0) {
-          gm[group] = (gm[group] ?? 0) + val;
-          gc[group] = (gc[group] ?? 0) + 1;
-        }
-        const cfg = groupConfigs[group];
-        // Check maxMass and fixedMass early
-        if (cfg.fixedMass !== null && cfg.fixedMass !== undefined) {
-          if (gm[group] > cfg.fixedMass + epsilon) continue;
-        }
-        if (cfg.maxMass !== null && cfg.maxMass !== undefined) {
-          if (gm[group] > cfg.maxMass + epsilon) continue;
-        }
-        // Check maxCount
-        if (cfg.maxCount !== null && cfg.maxCount !== undefined) {
-          if (gc[group] > cfg.maxCount) continue;
-        }
-        helper(index + 1, [...currentValues, val], gm, gc, newSum);
+    setTotalCombinations(totalLoops);
+
+    const maxAvailableWorkers = Math.max(1, navigator.hardwareConcurrency ?? 4);
+    setMaxWorkerCapacity(maxAvailableWorkers);
+    const firstRange = ranges[0] ?? [];
+    const nextWorkerCount = Math.max(1, Math.min(maxAvailableWorkers, firstRange.length || 1));
+    setWorkerCount(nextWorkerCount);
+
+    const chunkSize = Math.ceil(firstRange.length / nextWorkerCount);
+    const workerUrl = getWorkerUrl();
+    const componentPayload = components.map((comp) => ({ name: comp.name, group: comp.group }));
+    const perWorkerResults = Math.max(1, Math.floor(maxResults / nextWorkerCount));
+
+    workerStatsRef.current = Array.from({ length: nextWorkerCount }, () => ({
+      processed: 0,
+      valid: 0,
+    }));
+
+    const totalizeStats = () => {
+      const totals = workerStatsRef.current.reduce(
+        (acc, stat) => {
+          acc.processed += stat.processed;
+          acc.valid += stat.valid;
+          return acc;
+        },
+        { processed: 0, valid: 0 }
+      );
+      setProcessedCount(totals.processed);
+      setValidCount(totals.valid);
+      const percent = totalLoops > 0 ? Math.min(100, (totals.processed / totalLoops) * 100) : 0;
+      setProgress(percent);
+      if (totals.valid > maxResults) {
+        setResultsTruncated(true);
       }
     };
-    helper(0, [], {}, {}, 0);
-    // After generation
-    setProgress(100);
-    setResults(resultsTemp);
-    setGenerating(false);
+
+    let activeWorkers = nextWorkerCount;
+
+    workersRef.current = Array.from({ length: nextWorkerCount }, (_, workerId) => {
+      const worker = new Worker(workerUrl);
+      worker.onmessage = (event) => {
+        const { type, processed, valid, results: workerResults, workerId: id } = event.data || {};
+        if (typeof id !== 'number') return;
+        if (type === 'progress') {
+          workerStatsRef.current[id] = { processed, valid };
+          totalizeStats();
+        }
+        if (type === 'results' && Array.isArray(workerResults)) {
+          setResults((prev) => {
+            if (prev.length >= maxResults) return prev;
+            const remaining = maxResults - prev.length;
+            const slice = workerResults.slice(0, remaining).map((row: number[]) => {
+              const resultRow: ResultRow = {};
+              componentPayload.forEach((comp, index) => {
+                resultRow[comp.name] = row[index];
+              });
+              return resultRow;
+            });
+            return [...prev, ...slice];
+          });
+        }
+        if (type === 'done') {
+          workerStatsRef.current[id] = { processed, valid };
+          totalizeStats();
+          activeWorkers -= 1;
+          worker.terminate();
+          if (activeWorkers <= 0) {
+            setGenerating(false);
+            setProgress(100);
+          }
+        }
+      };
+      const startIndex = workerId * chunkSize;
+      const subset = firstRange.slice(startIndex, startIndex + chunkSize);
+      worker.postMessage({
+        type: 'start',
+        payload: {
+          components: componentPayload,
+          groupConfigs,
+          minTotal: minTotal ?? 0,
+          maxTotal: maxTotal ?? 0,
+          ranges,
+          firstValues: subset,
+          epsilon,
+          maxResults: perWorkerResults,
+          workerId,
+        },
+      });
+      return worker;
+    });
   };
 
   // Export results to CSV
@@ -515,7 +699,7 @@ export default function CombinationApp() {
                 onClick={exportCSV}
                 className="rounded-md border border-white/15 bg-white/10 px-5 py-2 text-sm font-semibold text-white hover:bg-white/20"
               >
-                Export CSV
+                Export CSV{resultsTruncated ? ' (stored only)' : ''}
               </button>
             )}
           </div>
@@ -793,7 +977,13 @@ export default function CombinationApp() {
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-sm text-red-200">
               <span className="inline-flex h-3 w-3 animate-ping rounded-full bg-red-400 opacity-70"></span>
-              <span>Calculating combinations… {progress.toFixed(1)}%</span>
+              <span>
+                Calculating combinations… {processedCount.toLocaleString()} checked
+                {totalCombinations > 0
+                  ? ` / ${totalCombinations.toLocaleString()}`
+                  : ''}{' '}
+                · {validCount.toLocaleString()} valid · {workerCount} of {maxWorkerCapacity} workers
+              </span>
             </div>
             <div className="w-full overflow-hidden rounded-full bg-white/10">
               <div
@@ -801,6 +991,10 @@ export default function CombinationApp() {
                 style={{ width: `${progress}%` }}
               ></div>
             </div>
+            <p className="text-xs text-neutral-400">
+              To stay under 1GB of memory, the app stores up to {maxResults.toLocaleString()}{' '}
+              combinations in the table.
+            </p>
           </div>
         )}
 
@@ -809,7 +1003,11 @@ export default function CombinationApp() {
           <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-xl font-semibold">
-                Generated Combinations <span className="text-red-300">({results.length})</span>
+                Generated Combinations{' '}
+                <span className="text-red-300">
+                  ({results.length.toLocaleString()}
+                  {resultsTruncated ? ` of ${validCount.toLocaleString()}` : ''})
+                </span>
               </h2>
               <div className="flex items-center gap-2 text-sm text-neutral-300">
                 <span>Display</span>
@@ -839,6 +1037,12 @@ export default function CombinationApp() {
                 </div>
               </div>
             </div>
+            {resultsTruncated && (
+              <p className="mt-2 text-xs text-neutral-400">
+                Showing the first {maxResults.toLocaleString()} results to keep memory usage light.
+                Refine your filters to capture a smaller subset if you need a full export.
+              </p>
+            )}
             <div className="mt-4 overflow-x-auto max-h-96 rounded-lg border border-white/10">
               <table className="min-w-full divide-y divide-white/10 text-sm">
                 <thead className="sticky top-0 bg-neutral-900 text-xs uppercase tracking-wider text-neutral-300">
