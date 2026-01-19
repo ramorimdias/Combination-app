@@ -22,10 +22,6 @@ interface GroupConfig {
   maxCount?: number | null;
 }
 
-interface ResultRow {
-  [key: string]: number;
-}
-
 interface WorkerProgress {
   processed: number;
   valid: number;
@@ -59,7 +55,7 @@ export default function CombinationApp() {
   const [totalCombinations, setTotalCombinations] = useState<number>(0);
   const [workerCount, setWorkerCount] = useState<number>(0);
   const [maxWorkerCapacity, setMaxWorkerCapacity] = useState<number>(0);
-  const [results, setResults] = useState<ResultRow[]>([]);
+  const [results, setResults] = useState<number[][]>([]);
   const [resultsTruncated, setResultsTruncated] = useState<boolean>(false);
   const [isHydrated, setIsHydrated] = useState<boolean>(false);
   const [minTotal, setMinTotal] = useState<number | null>(0.99);
@@ -68,7 +64,6 @@ export default function CombinationApp() {
   const [inputUnit, setInputUnit] = useState<'ratio' | 'percent'>('percent');
   const [resultUnit, setResultUnit] = useState<'ratio' | 'percent'>('ratio');
   const importInputRef = useRef<HTMLInputElement | null>(null);
-  const workerUrlRef = useRef<string | null>(null);
   const workersRef = useRef<Worker[]>([]);
   const workerStatsRef = useRef<WorkerProgress[]>([]);
 
@@ -97,169 +92,10 @@ export default function CombinationApp() {
     return text.split('.')[1].length;
   };
 
-  const getWorkerUrl = useCallback(() => {
-    if (workerUrlRef.current) return workerUrlRef.current;
-    const workerScript = `
-      let stopRequested = false;
-      const roundValue = (value) => Number(value.toFixed(6));
-      self.onmessage = (event) => {
-        const { type, payload } = event.data || {};
-        if (type === 'stop') {
-          stopRequested = true;
-          return;
-        }
-        if (type !== 'start' || !payload) return;
-        stopRequested = false;
-        const {
-          components,
-          groupConfigs,
-          minTotal,
-          maxTotal,
-          ranges,
-          firstValues,
-          epsilon,
-          maxResults,
-          workerId
-        } = payload;
-        const groupNames = Object.keys(groupConfigs);
-        let processed = 0;
-        let valid = 0;
-        let stored = 0;
-        let resultsChunk = [];
-
-        const postProgress = () => {
-          self.postMessage({ type: 'progress', workerId, processed, valid });
-        };
-        const flushResults = () => {
-          if (resultsChunk.length > 0) {
-            self.postMessage({ type: 'results', workerId, results: resultsChunk });
-            resultsChunk = [];
-          }
-        };
-
-        const helper = (
-          index,
-          currentValues,
-          groupMassSums,
-          groupCounts,
-          currentSum
-        ) => {
-          if (stopRequested) return;
-          if (index === components.length) {
-            processed += 1;
-            if (processed % 5000 === 0) {
-              postProgress();
-            }
-            if (currentSum >= minTotal - epsilon && currentSum <= maxTotal + epsilon) {
-              let validRow = true;
-              for (const group of groupNames) {
-                const cfg = groupConfigs[group];
-                const mass = groupMassSums[group] || 0;
-                const cnt = groupCounts[group] || 0;
-                if (cfg.fixedMass !== null && cfg.fixedMass !== undefined) {
-                  if (Math.abs(mass - cfg.fixedMass) > epsilon) {
-                    validRow = false;
-                    break;
-                  }
-                }
-                if (cfg.minMass !== null && cfg.minMass !== undefined) {
-                  if (mass < cfg.minMass - epsilon) {
-                    validRow = false;
-                    break;
-                  }
-                }
-                if (cfg.minCount !== null && cfg.minCount !== undefined) {
-                  if (cnt < cfg.minCount) {
-                    validRow = false;
-                    break;
-                  }
-                }
-                if (cfg.maxMass !== null && cfg.maxMass !== undefined) {
-                  if (mass > cfg.maxMass + epsilon) {
-                    validRow = false;
-                    break;
-                  }
-                }
-                if (cfg.maxCount !== null && cfg.maxCount !== undefined) {
-                  if (cnt > cfg.maxCount) {
-                    validRow = false;
-                    break;
-                  }
-                }
-              }
-              if (validRow) {
-                valid += 1;
-                if (stored < maxResults) {
-                  resultsChunk.push([...currentValues]);
-                  stored += 1;
-                  if (resultsChunk.length >= 200) {
-                    flushResults();
-                  }
-                }
-              }
-            }
-            return;
-          }
-          const comp = components[index];
-          const group = comp.group;
-          for (const val of ranges[index]) {
-            if (stopRequested) return;
-            const newSum = roundValue(currentSum + val);
-            if (newSum > maxTotal + epsilon) continue;
-            const gm = { ...groupMassSums };
-            const gc = { ...groupCounts };
-            if (val > 0) {
-              gm[group] = (gm[group] || 0) + val;
-              gc[group] = (gc[group] || 0) + 1;
-            }
-            const cfg = groupConfigs[group];
-            if (cfg.fixedMass !== null && cfg.fixedMass !== undefined) {
-              if (gm[group] > cfg.fixedMass + epsilon) continue;
-            }
-            if (cfg.maxMass !== null && cfg.maxMass !== undefined) {
-              if (gm[group] > cfg.maxMass + epsilon) continue;
-            }
-            if (cfg.maxCount !== null && cfg.maxCount !== undefined) {
-              if (gc[group] > cfg.maxCount) continue;
-            }
-            helper(index + 1, [...currentValues, val], gm, gc, newSum);
-          }
-        };
-
-        for (const firstVal of firstValues) {
-          if (stopRequested) break;
-          const firstGroup = components[0].group;
-          const initialMass = {};
-          const initialCount = {};
-          let sum = roundValue(firstVal);
-          if (firstVal > 0) {
-            initialMass[firstGroup] = firstVal;
-            initialCount[firstGroup] = 1;
-          }
-          if (sum > maxTotal + epsilon) {
-            processed += ranges.slice(1).reduce((acc, arr) => acc * arr.length, 1);
-            continue;
-          }
-          helper(1, [firstVal], initialMass, initialCount, sum);
-        }
-
-        postProgress();
-        flushResults();
-        self.postMessage({ type: 'done', workerId, processed, valid, stored });
-      };
-    `;
-    const url = URL.createObjectURL(new Blob([workerScript], { type: 'application/javascript' }));
-    workerUrlRef.current = url;
-    return url;
-  }, []);
-
   useEffect(() => {
     return () => {
       workersRef.current.forEach((worker) => worker.terminate());
       workersRef.current = [];
-      if (workerUrlRef.current) {
-        URL.revokeObjectURL(workerUrlRef.current);
-      }
     };
   }, []);
 
@@ -526,8 +362,8 @@ export default function CombinationApp() {
     setWorkerCount(nextWorkerCount);
 
     const chunkSize = Math.ceil(firstRange.length / nextWorkerCount);
-    const workerUrl = getWorkerUrl();
     const componentPayload = components.map((comp) => ({ name: comp.name, group: comp.group }));
+    const componentNames = componentPayload.map((comp) => comp.name);
     const perWorkerResults = Math.max(1, Math.floor(maxResults / nextWorkerCount));
 
     workerStatsRef.current = Array.from({ length: nextWorkerCount }, () => ({
@@ -556,26 +392,28 @@ export default function CombinationApp() {
     let activeWorkers = nextWorkerCount;
 
     workersRef.current = Array.from({ length: nextWorkerCount }, (_, workerId) => {
-      const worker = new Worker(workerUrl);
+      const worker = new Worker(new URL('./workers/combinationWorker.ts', import.meta.url), {
+        type: 'module',
+      });
       worker.onmessage = (event) => {
-        const { type, processed, valid, results: workerResults, workerId: id } = event.data || {};
+        const { type, processed, valid, rows, rowCount, workerId: id } = event.data || {};
         if (typeof id !== 'number') return;
         if (type === 'progress') {
           workerStatsRef.current[id] = { processed, valid };
           totalizeStats();
         }
-        if (type === 'results' && Array.isArray(workerResults)) {
+        if (type === 'results' && rows instanceof Float64Array && typeof rowCount === 'number') {
           setResults((prev) => {
             if (prev.length >= maxResults) return prev;
             const remaining = maxResults - prev.length;
-            const slice = workerResults.slice(0, remaining).map((row: number[]) => {
-              const resultRow: ResultRow = {};
-              componentPayload.forEach((comp, index) => {
-                resultRow[comp.name] = row[index];
-              });
-              return resultRow;
-            });
-            return [...prev, ...slice];
+            const take = Math.min(remaining, rowCount);
+            const nextRows: number[][] = [];
+            for (let i = 0; i < take; i += 1) {
+              const start = i * componentNames.length;
+              const row = Array.from(rows.slice(start, start + componentNames.length));
+              nextRows.push(row);
+            }
+            return [...prev, ...nextRows];
           });
         }
         if (type === 'done') {
@@ -612,11 +450,11 @@ export default function CombinationApp() {
   // Export results to CSV
   const exportCSV = () => {
     if (results.length === 0) return;
-    const headers = Object.keys(results[0]);
+    const headers = components.map((comp) => comp.name);
     const lines = [];
     lines.push(headers.join(','));
     results.forEach((row) => {
-      const vals = headers.map((h) => String(row[h] ?? ''));
+      const vals = headers.map((_, index) => String(row[index] ?? ''));
       lines.push(vals.join(','));
     });
     const csvContent = lines.join('\n');
@@ -1047,9 +885,9 @@ export default function CombinationApp() {
               <table className="min-w-full divide-y divide-white/10 text-sm">
                 <thead className="sticky top-0 bg-neutral-900 text-xs uppercase tracking-wider text-neutral-300">
                   <tr>
-                    {Object.keys(results[0]).map((header) => (
-                      <th key={header} className="px-4 py-2 text-left">
-                        {header}
+                    {components.map((comp) => (
+                      <th key={comp.id} className="px-4 py-2 text-left">
+                        {comp.name}
                       </th>
                     ))}
                   </tr>
@@ -1057,11 +895,11 @@ export default function CombinationApp() {
                 <tbody className="divide-y divide-white/5 text-neutral-100">
                   {results.map((row, rowIndex) => (
                     <tr key={rowIndex} className="hover:bg-white/5">
-                      {Object.keys(row).map((key) => (
-                        <td key={key} className="px-4 py-1 whitespace-nowrap text-right">
+                      {row.map((value, index) => (
+                        <td key={`${rowIndex}-${index}`} className="px-4 py-1 whitespace-nowrap text-right">
                           {resultUnit === 'percent'
-                            ? `${(row[key] * 100).toFixed(1)}%`
-                            : row[key]}
+                            ? `${(value * 100).toFixed(1)}%`
+                            : value}
                         </td>
                       ))}
                     </tr>
