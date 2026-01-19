@@ -54,6 +54,7 @@ export default function CombinationApp() {
   const [minTotal, setMinTotal] = useState<number | null>(0.99);
   const [maxTotal, setMaxTotal] = useState<number | null>(1.01);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [inputUnit, setInputUnit] = useState<'ratio' | 'percent'>('percent');
   const [resultUnit, setResultUnit] = useState<'ratio' | 'percent'>('ratio');
 
   const storageKey = 'combinationAppSetup';
@@ -66,6 +67,13 @@ export default function CombinationApp() {
   const formatPercent = (value: number | null) =>
     value === null || Number.isNaN(value) ? '' : (value * 100).toFixed(1);
   const parsePercent = (value: string) => (value === '' ? null : Number(value) / 100);
+  const formatInputValue = (value: number | null) =>
+    inputUnit === 'percent' ? formatPercent(value) : value ?? '';
+  const parseInputValue = (value: string) =>
+    inputUnit === 'percent' ? parsePercent(value) : value === '' ? null : Number(value);
+  const inputMin = inputUnit === 'percent' ? 0 : 0;
+  const inputMax = inputUnit === 'percent' ? 100 : 1;
+  const inputStep = inputUnit === 'percent' ? 0.1 : 0.001;
   const decimalPlaces = (value: number) => {
     if (!Number.isFinite(value)) return 0;
     const text = value.toString();
@@ -381,7 +389,34 @@ export default function CombinationApp() {
               Configure component ranges and group rules to generate combinations.
             </p>
           </div>
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 text-xs text-neutral-300">
+              <span>Input units</span>
+              <div className="flex rounded-full border border-white/10 bg-white/5 p-1">
+                <button
+                  type="button"
+                  className={`px-3 py-1 text-xs font-semibold ${
+                    inputUnit === 'ratio'
+                      ? 'rounded-full bg-red-600 text-white'
+                      : 'text-neutral-300'
+                  }`}
+                  onClick={() => setInputUnit('ratio')}
+                >
+                  0-1
+                </button>
+                <button
+                  type="button"
+                  className={`px-3 py-1 text-xs font-semibold ${
+                    inputUnit === 'percent'
+                      ? 'rounded-full bg-red-600 text-white'
+                      : 'text-neutral-300'
+                  }`}
+                  onClick={() => setInputUnit('percent')}
+                >
+                  %
+                </button>
+              </div>
+            </div>
             <button
               onClick={generateCombinations}
               disabled={generating}
@@ -412,7 +447,7 @@ export default function CombinationApp() {
               <div>
                 <h2 className="text-xl font-semibold">Components</h2>
                 <p className="text-sm text-neutral-400">
-                  Define each component with min/max limits and step precision (%).
+                  Define each component with min/max limits and step precision.
                 </p>
               </div>
               <button
@@ -430,10 +465,10 @@ export default function CombinationApp() {
                   <tr>
                     <th className="px-4 py-2 text-left">Name</th>
                     <th className="px-4 py-2 text-left">Group</th>
-                    <th className="px-4 py-2 text-left">Min (%)</th>
-                    <th className="px-4 py-2 text-left">Max (%)</th>
-                    <th className="px-4 py-2 text-left">Step (%)</th>
-                    <th className="px-4 py-2 text-left">Fixed (%)</th>
+                    <th className="px-4 py-2 text-left">Min</th>
+                    <th className="px-4 py-2 text-left">Max</th>
+                    <th className="px-4 py-2 text-left">Step</th>
+                    <th className="px-4 py-2 text-left">Fixed</th>
                     <th className="px-4 py-2"></th>
                   </tr>
                 </thead>
@@ -459,58 +494,58 @@ export default function CombinationApp() {
                         />
                       </td>
                 <td className="px-4 py-2">
-                  <input
-                    type="number"
-                    className={`${inputRight} w-20`}
-                    value={formatPercent(comp.min)}
-                    min={0}
-                    max={100}
-                    step={0.1}
-                    onChange={(e) => {
-                      updateComponent(comp.id, 'min', parsePercent(e.target.value));
-                    }}
-                  />
-                </td>
-                <td className="px-4 py-2">
-                  <input
-                    type="number"
-                    className={`${inputRight} w-20`}
-                    value={formatPercent(comp.max)}
-                    min={0}
-                    max={100}
-                    step={0.1}
-                    onChange={(e) => {
-                      updateComponent(comp.id, 'max', parsePercent(e.target.value));
-                    }}
-                  />
-                </td>
-                <td className="px-4 py-2">
-                  <input
-                    type="number"
-                    className={`${inputRight} w-20`}
-                    value={formatPercent(comp.step)}
-                    min={0.1}
-                    max={100}
-                    step={0.1}
-                    onChange={(e) => {
-                      updateComponent(comp.id, 'step', parsePercent(e.target.value));
-                    }}
-                  />
-                </td>
-                <td className="px-4 py-2">
-                  <input
-                    type="number"
-                    className={`${inputRight} w-20`}
-                    min={0}
-                    max={100}
-                    step={0.1}
-                    value={formatPercent(comp.fixed ?? null)}
-                    onChange={(e) => {
-                      updateComponent(comp.id, 'fixed', parsePercent(e.target.value));
-                    }}
-                    placeholder="--"
-                  />
-                </td>
+                      <input
+                        type="number"
+                        className={`${inputRight} w-20`}
+                        value={formatInputValue(comp.min)}
+                        min={inputMin}
+                        max={inputMax}
+                        step={inputStep}
+                        onChange={(e) => {
+                          updateComponent(comp.id, 'min', parseInputValue(e.target.value));
+                        }}
+                      />
+                    </td>
+                    <td className="px-4 py-2">
+                      <input
+                        type="number"
+                        className={`${inputRight} w-20`}
+                        value={formatInputValue(comp.max)}
+                        min={inputMin}
+                        max={inputMax}
+                        step={inputStep}
+                        onChange={(e) => {
+                          updateComponent(comp.id, 'max', parseInputValue(e.target.value));
+                        }}
+                      />
+                    </td>
+                    <td className="px-4 py-2">
+                      <input
+                        type="number"
+                        className={`${inputRight} w-20`}
+                        value={formatInputValue(comp.step)}
+                        min={inputStep}
+                        max={inputMax}
+                        step={inputStep}
+                        onChange={(e) => {
+                          updateComponent(comp.id, 'step', parseInputValue(e.target.value));
+                        }}
+                      />
+                    </td>
+                    <td className="px-4 py-2">
+                      <input
+                        type="number"
+                        className={`${inputRight} w-20`}
+                        min={inputMin}
+                        max={inputMax}
+                        step={inputStep}
+                        value={formatInputValue(comp.fixed ?? null)}
+                        onChange={(e) => {
+                          updateComponent(comp.id, 'fixed', parseInputValue(e.target.value));
+                        }}
+                        placeholder="--"
+                      />
+                    </td>
                       <td className="px-4 py-2 text-center">
                         {components.length > 1 && (
                           <button
@@ -531,18 +566,18 @@ export default function CombinationApp() {
           <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-6">
             <h2 className="text-lg font-semibold">Total Mass Bounds</h2>
             <p className="text-sm text-neutral-400">
-              Allow totals between your chosen minimum and maximum range (%).
+              Allow totals between your chosen minimum and maximum range.
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <input
                 type="number"
                 className={`${inputRight} w-24`}
-                value={formatPercent(minTotal)}
-                min={0}
-                max={150}
-                step={0.1}
+                value={formatInputValue(minTotal)}
+                min={inputMin}
+                max={inputUnit === 'percent' ? 150 : 1.5}
+                step={inputStep}
                 onChange={(e) => {
-                  setMinTotal(parsePercent(e.target.value));
+                  setMinTotal(parseInputValue(e.target.value));
                 }}
                 placeholder="Min"
               />
@@ -550,12 +585,12 @@ export default function CombinationApp() {
               <input
                 type="number"
                 className={`${inputRight} w-24`}
-                value={formatPercent(maxTotal)}
-                min={0}
-                max={150}
-                step={0.1}
+                value={formatInputValue(maxTotal)}
+                min={inputMin}
+                max={inputUnit === 'percent' ? 150 : 1.5}
+                step={inputStep}
                 onChange={(e) => {
-                  setMaxTotal(parsePercent(e.target.value));
+                  setMaxTotal(parseInputValue(e.target.value));
                 }}
                 placeholder="Max"
               />
@@ -565,16 +600,16 @@ export default function CombinationApp() {
           <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-6">
             <h2 className="text-lg font-semibold">Group Constraints</h2>
             <p className="text-sm text-neutral-400">
-              Configure mass (%) and count constraints for each group.
+              Configure mass and count constraints for each group.
             </p>
             <div className="mt-4 overflow-x-auto">
               <table className="min-w-full divide-y divide-white/10 text-sm">
                 <thead className="bg-white/5 text-xs uppercase tracking-wider text-neutral-300">
                   <tr>
                     <th className="px-4 py-2 text-left">Group</th>
-                    <th className="px-4 py-2 text-left">Min Mass (%)</th>
-                    <th className="px-4 py-2 text-left">Max Mass (%)</th>
-                    <th className="px-4 py-2 text-left">Fixed Mass (%)</th>
+                    <th className="px-4 py-2 text-left">Min Mass</th>
+                    <th className="px-4 py-2 text-left">Max Mass</th>
+                    <th className="px-4 py-2 text-left">Fixed Mass</th>
                     <th className="px-4 py-2 text-left">Min Count</th>
                     <th className="px-4 py-2 text-left">Max Count</th>
                   </tr>
@@ -589,11 +624,13 @@ export default function CombinationApp() {
                           <input
                             type="number"
                             className={`${inputRight} w-20`}
-                            value={formatPercent(cfg.minMass ?? null)}
-                            min={0}
-                            max={100}
-                            step={0.1}
-                            onChange={(e) => updateGroupConfig(groupName, 'minMass', parsePercent(e.target.value))}
+                            value={formatInputValue(cfg.minMass ?? null)}
+                            min={inputMin}
+                            max={inputMax}
+                            step={inputStep}
+                            onChange={(e) =>
+                              updateGroupConfig(groupName, 'minMass', parseInputValue(e.target.value))
+                            }
                             placeholder="--"
                           />
                         </td>
@@ -601,11 +638,13 @@ export default function CombinationApp() {
                           <input
                             type="number"
                             className={`${inputRight} w-20`}
-                            value={formatPercent(cfg.maxMass ?? null)}
-                            min={0}
-                            max={100}
-                            step={0.1}
-                            onChange={(e) => updateGroupConfig(groupName, 'maxMass', parsePercent(e.target.value))}
+                            value={formatInputValue(cfg.maxMass ?? null)}
+                            min={inputMin}
+                            max={inputMax}
+                            step={inputStep}
+                            onChange={(e) =>
+                              updateGroupConfig(groupName, 'maxMass', parseInputValue(e.target.value))
+                            }
                             placeholder="--"
                           />
                         </td>
@@ -613,11 +652,13 @@ export default function CombinationApp() {
                           <input
                             type="number"
                             className={`${inputRight} w-20`}
-                            value={formatPercent(cfg.fixedMass ?? null)}
-                            min={0}
-                            max={100}
-                            step={0.1}
-                            onChange={(e) => updateGroupConfig(groupName, 'fixedMass', parsePercent(e.target.value))}
+                            value={formatInputValue(cfg.fixedMass ?? null)}
+                            min={inputMin}
+                            max={inputMax}
+                            step={inputStep}
+                            onChange={(e) =>
+                              updateGroupConfig(groupName, 'fixedMass', parseInputValue(e.target.value))
+                            }
                             placeholder="--"
                           />
                         </td>
@@ -649,11 +690,17 @@ export default function CombinationApp() {
         </div>
         {/* Progress bar */}
         {generating && (
-          <div className="w-full overflow-hidden rounded-full bg-white/10">
-            <div
-              className="h-2 rounded-full bg-red-500 transition-all"
-              style={{ width: `${progress}%` }}
-            ></div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm text-red-200">
+              <span className="inline-flex h-3 w-3 animate-ping rounded-full bg-red-400 opacity-70"></span>
+              <span>Calculating combinations… {progress.toFixed(1)}%</span>
+            </div>
+            <div className="w-full overflow-hidden rounded-full bg-white/10">
+              <div
+                className="h-2 rounded-full bg-red-500 transition-all"
+                style={{ width: `${progress}%` }}
+              ></div>
+            </div>
           </div>
         )}
 
