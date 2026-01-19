@@ -140,6 +140,25 @@ export default function CombinationApp() {
     const parsed = Number(normalized);
     return Number.isNaN(parsed) ? 0 : parsed;
   };
+  const coerceOptionalNumber = (value: NumericInput, unit: 'ratio' | 'percent' = inputUnit) => {
+    if (value === null || value === undefined || value === '') return null;
+    if (typeof value === 'number') {
+      return Number.isNaN(value) ? null : value;
+    }
+    const normalized = normalizeDecimal(value);
+    const parsed = Number(normalized);
+    if (Number.isNaN(parsed)) return null;
+    return unit === 'percent' ? parsed / 100 : parsed;
+  };
+  const coerceOptionalCount = (value: NumericInput) => {
+    if (value === null || value === undefined || value === '') return null;
+    if (typeof value === 'number') {
+      return Number.isNaN(value) ? null : value;
+    }
+    const normalized = normalizeDecimal(value);
+    const parsed = Number(normalized);
+    return Number.isNaN(parsed) ? null : parsed;
+  };
   const coerceStep = (value: NumericInput) => {
     if (value === null || value === undefined || value === '') return 0.1;
     const parsed = coerceNumber(value);
@@ -400,8 +419,8 @@ export default function CombinationApp() {
     // Build ranges for each component
     const ranges = components.map((comp) => {
       // Determine if fixed value is provided
-      const fixedValue = coerceNumber(comp.fixed ?? null);
-      if (comp.fixed !== null && comp.fixed !== undefined && !Number.isNaN(fixedValue)) {
+      const fixedValue = coerceOptionalNumber(comp.fixed ?? null);
+      if (fixedValue !== null) {
         return [fixedValue];
       }
       const step = coerceStep(comp.step ?? 0.1);
@@ -443,11 +462,11 @@ export default function CombinationApp() {
         name,
         {
           ...cfg,
-          minMass: coerceNumber(cfg.minMass),
-          maxMass: coerceNumber(cfg.maxMass),
-          fixedMass: coerceNumber(cfg.fixedMass),
-          minCount: coerceCount(cfg.minCount),
-          maxCount: coerceCount(cfg.maxCount),
+          minMass: coerceOptionalNumber(cfg.minMass),
+          maxMass: coerceOptionalNumber(cfg.maxMass),
+          fixedMass: coerceOptionalNumber(cfg.fixedMass),
+          minCount: coerceOptionalCount(cfg.minCount),
+          maxCount: coerceOptionalCount(cfg.maxCount),
         },
       ])
     );
