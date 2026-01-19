@@ -57,6 +57,7 @@ export default function CombinationApp() {
   const [maxWorkerCapacity, setMaxWorkerCapacity] = useState<number>(0);
   const [results, setResults] = useState<number[][]>([]);
   const [resultsTruncated, setResultsTruncated] = useState<boolean>(false);
+  const [exportRowCount, setExportRowCount] = useState<number>(0);
   const [isHydrated, setIsHydrated] = useState<boolean>(false);
   const [minTotal, setMinTotal] = useState<number | null>(0.99);
   const [maxTotal, setMaxTotal] = useState<number | null>(1.01);
@@ -66,10 +67,11 @@ export default function CombinationApp() {
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const workersRef = useRef<Worker[]>([]);
   const workerStatsRef = useRef<WorkerProgress[]>([]);
+  const csvChunksRef = useRef<string[]>([]);
 
   const storageKey = 'combinationAppSetup';
   const epsilon = 1e-6;
-  const maxResults = 50000;
+  const displayLimit = 50000;
   const roundValue = (value: number) => Number(value.toFixed(6));
   const inputBase =
     'rounded-md border border-neutral-700 bg-neutral-950/70 px-2 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-red-500/60 focus:border-red-500';
@@ -331,6 +333,7 @@ export default function CombinationApp() {
     setValidCount(0);
     setResults([]);
     setResultsTruncated(false);
+    setExportRowCount(0);
     // Build ranges for each component
     const ranges = components.map((comp) => {
       // Determine if fixed value is provided
@@ -364,7 +367,8 @@ export default function CombinationApp() {
     const chunkSize = Math.ceil(firstRange.length / nextWorkerCount);
     const componentPayload = components.map((comp) => ({ name: comp.name, group: comp.group }));
     const componentNames = componentPayload.map((comp) => comp.name);
-    const perWorkerResults = Math.max(1, Math.floor(maxResults / nextWorkerCount));
+    const perWorkerResults = Math.max(1, Math.floor(displayLimit / nextWorkerCount));
+    csvChunksRef.current = [`${componentNames.join(',')}\n`];
 
     workerStatsRef.current = Array.from({ length: nextWorkerCount }, () => ({
       processed: 0,
@@ -384,7 +388,7 @@ export default function CombinationApp() {
       setValidCount(totals.valid);
       const percent = totalLoops > 0 ? Math.min(100, (totals.processed / totalLoops) * 100) : 0;
       setProgress(percent);
-      if (totals.valid > maxResults) {
+      if (totals.valid > displayLimit) {
         setResultsTruncated(true);
       }
     };
@@ -403,9 +407,22 @@ export default function CombinationApp() {
           totalizeStats();
         }
         if (type === 'results' && rows instanceof Float64Array && typeof rowCount === 'number') {
+          const lines: string[] = [];
+          for (let i = 0; i < rowCount; i += 1) {
+            const start = i * componentNames.length;
+            const values = [];
+            for (let j = 0; j < componentNames.length; j += 1) {
+              values.push(String(rows[start + j] ?? ''));
+            }
+            lines.push(values.join(','));
+          }
+          if (lines.length > 0) {
+            csvChunksRef.current.push(`${lines.join('\n')}\n`);
+          }
+          setExportRowCount((prev) => prev + rowCount);
           setResults((prev) => {
-            if (prev.length >= maxResults) return prev;
-            const remaining = maxResults - prev.length;
+            if (prev.length >= displayLimit) return prev;
+            const remaining = displayLimit - prev.length;
             const take = Math.min(remaining, rowCount);
             const nextRows: number[][] = [];
             for (let i = 0; i < take; i += 1) {
@@ -449,16 +466,8 @@ export default function CombinationApp() {
 
   // Export results to CSV
   const exportCSV = () => {
-    if (results.length === 0) return;
-    const headers = components.map((comp) => comp.name);
-    const lines = [];
-    lines.push(headers.join(','));
-    results.forEach((row) => {
-      const vals = headers.map((_, index) => String(row[index] ?? ''));
-      lines.push(vals.join(','));
-    });
-    const csvContent = lines.join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    if (csvChunksRef.current.length === 0 || exportRowCount === 0) return;
+    const blob = new Blob(csvChunksRef.current, { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -466,6 +475,7 @@ export default function CombinationApp() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -537,7 +547,7 @@ export default function CombinationApp() {
                 onClick={exportCSV}
                 className="rounded-md border border-white/15 bg-white/10 px-5 py-2 text-sm font-semibold text-white hover:bg-white/20"
               >
-                Export CSV{resultsTruncated ? ' (stored only)' : ''}
+                Export CSV
               </button>
             )}
           </div>
@@ -830,8 +840,8 @@ export default function CombinationApp() {
               ></div>
             </div>
             <p className="text-xs text-neutral-400">
-              To stay under 1GB of memory, the app stores up to {maxResults.toLocaleString()}{' '}
-              combinations in the table.
+              The table displays up to {displayLimit.toLocaleString()} rows to keep the UI fast.
+              CSV export includes all {exportRowCount.toLocaleString()} generated combinations.
             </p>
           </div>
         )}
@@ -877,8 +887,8 @@ export default function CombinationApp() {
             </div>
             {resultsTruncated && (
               <p className="mt-2 text-xs text-neutral-400">
-                Showing the first {maxResults.toLocaleString()} results to keep memory usage light.
-                Refine your filters to capture a smaller subset if you need a full export.
+                Showing the first {displayLimit.toLocaleString()} results for readability. Export to
+                CSV to download the full set.
               </p>
             )}
             <div className="mt-4 overflow-x-auto max-h-96 rounded-lg border border-white/10">
