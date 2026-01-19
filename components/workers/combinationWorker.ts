@@ -52,7 +52,7 @@ type DoneMessage = {
   stored: number;
 };
 
-const ctx = self as DedicatedWorkerGlobalScope;
+const ctx = self as unknown as DedicatedWorkerGlobalScope;
 let stopRequested = false;
 const roundValue = (value: number) => Number(value.toFixed(6));
 
