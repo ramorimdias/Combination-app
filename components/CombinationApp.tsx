@@ -60,6 +60,7 @@ export default function CombinationApp() {
   const [results, setResults] = useState<number[][]>([]);
   const [resultsTruncated, setResultsTruncated] = useState<boolean>(false);
   const [exportRowCount, setExportRowCount] = useState<number>(0);
+  const [elapsedMs, setElapsedMs] = useState<number>(0);
   const [isHydrated, setIsHydrated] = useState<boolean>(false);
   const [minTotal, setMinTotal] = useState<NumericInput>(0.99);
   const [maxTotal, setMaxTotal] = useState<NumericInput>(1.01);
@@ -70,6 +71,7 @@ export default function CombinationApp() {
   const workersRef = useRef<Worker[]>([]);
   const workerStatsRef = useRef<WorkerProgress[]>([]);
   const csvChunksRef = useRef<string[]>([]);
+  const startTimeRef = useRef<number | null>(null);
 
   const storageKey = 'combinationAppSetup';
   const epsilon = 1e-6;
@@ -143,6 +145,11 @@ export default function CombinationApp() {
     const text = value.toString();
     if (!text.includes('.')) return 0;
     return text.split('.')[1].length;
+  };
+  const formatElapsed = (value: number) => {
+    if (!Number.isFinite(value) || value <= 0) return '';
+    if (value < 1000) return `${Math.round(value)} ms`;
+    return `${(value / 1000).toFixed(2)} s`;
   };
 
   useEffect(() => {
@@ -383,6 +390,8 @@ export default function CombinationApp() {
     setResults([]);
     setResultsTruncated(false);
     setExportRowCount(0);
+    setElapsedMs(0);
+    startTimeRef.current = performance.now();
     // Build ranges for each component
     const ranges = components.map((comp) => {
       // Determine if fixed value is provided
@@ -507,6 +516,9 @@ export default function CombinationApp() {
           activeWorkers -= 1;
           worker.terminate();
           if (activeWorkers <= 0) {
+            if (startTimeRef.current !== null) {
+              setElapsedMs(performance.now() - startTimeRef.current);
+            }
             setGenerating(false);
             setProgress(100);
           }
@@ -925,6 +937,11 @@ export default function CombinationApp() {
                   {resultsTruncated ? ` of ${validCount.toLocaleString()}` : ''})
                 </span>
               </h2>
+              {elapsedMs > 0 && (
+                <span className="text-sm text-neutral-300">
+                  Time: <span className="text-white">{formatElapsed(elapsedMs)}</span>
+                </span>
+              )}
               <div className="flex items-center gap-2 text-sm text-neutral-300">
                 <span>Display</span>
                 <div className="flex rounded-full border border-white/10 bg-white/5 p-1">
