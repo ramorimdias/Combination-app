@@ -140,6 +140,11 @@ export default function CombinationApp() {
     const parsed = Number(normalized);
     return Number.isNaN(parsed) ? 0 : parsed;
   };
+  const coerceStep = (value: NumericInput) => {
+    if (value === null || value === undefined || value === '') return 0.1;
+    const parsed = coerceNumber(value);
+    return parsed;
+  };
   const decimalPlaces = (value: number) => {
     if (!Number.isFinite(value)) return 0;
     const text = value.toString();
@@ -360,7 +365,7 @@ export default function CombinationApp() {
       return false;
     }
     for (const comp of components) {
-      const stepValue = coerceNumber(comp.step);
+      const stepValue = coerceStep(comp.step);
       if (stepValue <= 0) {
         setErrorMessage('Step must be greater than 0 for all components.');
         return false;
@@ -399,7 +404,7 @@ export default function CombinationApp() {
       if (comp.fixed !== null && comp.fixed !== undefined && !Number.isNaN(fixedValue)) {
         return [fixedValue];
       }
-      const step = coerceNumber(comp.step ?? 0.1);
+      const step = coerceStep(comp.step ?? 0.1);
       const scale = Math.pow(
         10,
         Math.max(
