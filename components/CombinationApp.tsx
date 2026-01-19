@@ -367,7 +367,7 @@ export default function CombinationApp() {
     const chunkSize = Math.ceil(firstRange.length / nextWorkerCount);
     const componentPayload = components.map((comp) => ({ name: comp.name, group: comp.group }));
     const componentNames = componentPayload.map((comp) => comp.name);
-    const perWorkerResults = Math.max(1, Math.floor(displayLimit / nextWorkerCount));
+    const maxResultsForWorker = Number.MAX_SAFE_INTEGER;
     csvChunksRef.current = [`${componentNames.join(',')}\n`];
 
     workerStatsRef.current = Array.from({ length: nextWorkerCount }, () => ({
@@ -456,7 +456,7 @@ export default function CombinationApp() {
           ranges,
           firstValues: subset,
           epsilon,
-          maxResults: perWorkerResults,
+          maxResults: maxResultsForWorker,
           workerId,
         },
       });
