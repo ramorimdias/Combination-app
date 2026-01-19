@@ -94,6 +94,9 @@ export default function CombinationApp() {
   const parseInputValue = (value: string): NumericInput => {
     if (value === '') return '';
     if (isIntermediateNumber(value)) return value;
+    if ((value.includes('.') || value.includes(',')) && /[.,]\d*0$/.test(value)) {
+      return value;
+    }
     const normalized = normalizeDecimal(value);
     const parsed = Number(normalized);
     if (Number.isNaN(parsed)) return value;
@@ -108,6 +111,9 @@ export default function CombinationApp() {
   const parseCountValue = (value: string): NumericInput => {
     if (value === '') return '';
     if (isIntermediateNumber(value)) return value;
+    if ((value.includes('.') || value.includes(',')) && /[.,]\d*0$/.test(value)) {
+      return value;
+    }
     const normalized = normalizeDecimal(value);
     const parsed = Number(normalized);
     if (Number.isNaN(parsed)) return value;
