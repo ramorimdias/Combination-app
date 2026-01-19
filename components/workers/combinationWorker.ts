@@ -1,3 +1,5 @@
+/// <reference lib="webworker" />
+
 type ComponentPayload = {
   name: string;
   group: string;
@@ -50,7 +52,7 @@ type DoneMessage = {
   stored: number;
 };
 
-const ctx: DedicatedWorkerGlobalScope = self as DedicatedWorkerGlobalScope;
+const ctx = self as DedicatedWorkerGlobalScope;
 let stopRequested = false;
 const roundValue = (value: number) => Number(value.toFixed(6));
 
