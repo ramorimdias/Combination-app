@@ -52,7 +52,7 @@ export default function CombinationApp() {
   const [results, setResults] = useState<ResultRow[]>([]);
   const [isHydrated, setIsHydrated] = useState<boolean>(false);
   const [minTotal, setMinTotal] = useState<number | null>(0.99);
-  const [maxTotal, setMaxTotal] = useState<number | null>(1.1);
+  const [maxTotal, setMaxTotal] = useState<number | null>(1.01);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
   const storageKey = 'combinationAppSetup';
@@ -370,18 +370,12 @@ export default function CombinationApp() {
   return (
     <div className="min-h-screen bg-neutral-950 text-white">
       <div className="container mx-auto max-w-6xl p-4 md:p-8 space-y-8">
-        <header className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-            <div className="bg-red-600 px-4 py-2 text-xl font-extrabold uppercase tracking-[0.35em] text-white">
-              Motul
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-[0.4em] text-red-400">Visco Lab</p>
-              <h1 className="text-3xl font-semibold">Formula Combination Generator</h1>
-              <p className="text-sm text-neutral-300">
-                Configure component ranges and group rules to build Motul-grade blends.
-              </p>
-            </div>
+        <header className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h1 className="text-3xl font-semibold">Formula Combination Generator</h1>
+            <p className="text-sm text-neutral-300">
+              Configure component ranges and group rules to generate combinations.
+            </p>
           </div>
           <div className="flex flex-wrap gap-3">
             <button
@@ -408,7 +402,7 @@ export default function CombinationApp() {
           </div>
         )}
 
-        <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
+        <div className="space-y-6">
           <div className="space-y-6 rounded-2xl border border-white/10 bg-neutral-900/60 p-6">
             <div className="flex items-center justify-between">
               <div>
@@ -534,128 +528,124 @@ export default function CombinationApp() {
             </div>
           </div>
 
-          <div className="space-y-6">
-            <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-6">
-              <h2 className="text-lg font-semibold">Total Mass Bounds</h2>
-              <p className="text-sm text-neutral-400">
-                Allow totals between your chosen minimum and maximum range.
-              </p>
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <input
-                  type="number"
-                  className={`${inputRight} w-24`}
-                  value={minTotal ?? ''}
-                  min={0}
-                  max={1.5}
-                  step={0.01}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setMinTotal(val === '' ? null : parseFloat(val));
-                  }}
-                  placeholder="Min"
-                />
-                <span className="text-sm text-neutral-400">to</span>
-                <input
-                  type="number"
-                  className={`${inputRight} w-24`}
-                  value={maxTotal ?? ''}
-                  min={0}
-                  max={1.5}
-                  step={0.01}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setMaxTotal(val === '' ? null : parseFloat(val));
-                  }}
-                  placeholder="Max"
-                />
-              </div>
+          <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-6">
+            <h2 className="text-lg font-semibold">Total Mass Bounds</h2>
+            <p className="text-sm text-neutral-400">
+              Allow totals between your chosen minimum and maximum range.
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <input
+                type="number"
+                className={`${inputRight} w-24`}
+                value={minTotal ?? ''}
+                min={0}
+                max={1.5}
+                step={0.01}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setMinTotal(val === '' ? null : parseFloat(val));
+                }}
+                placeholder="Min"
+              />
+              <span className="text-sm text-neutral-400">to</span>
+              <input
+                type="number"
+                className={`${inputRight} w-24`}
+                value={maxTotal ?? ''}
+                min={0}
+                max={1.5}
+                step={0.01}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setMaxTotal(val === '' ? null : parseFloat(val));
+                }}
+                placeholder="Max"
+              />
             </div>
+          </div>
 
-            <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-6">
-              <h2 className="text-lg font-semibold">Group Constraints</h2>
-              <p className="text-sm text-neutral-400">
-                Configure mass (0-1 scale) and count constraints for each group.
-              </p>
-              <div className="mt-4 overflow-x-auto">
-                <table className="min-w-full divide-y divide-white/10 text-sm">
-                  <thead className="bg-white/5 text-xs uppercase tracking-wider text-neutral-300">
-                    <tr>
-                      <th className="px-4 py-2 text-left">Group</th>
-                      <th className="px-4 py-2 text-left">Min Mass</th>
-                      <th className="px-4 py-2 text-left">Max Mass</th>
-                      <th className="px-4 py-2 text-left">Fixed Mass</th>
-                      <th className="px-4 py-2 text-left">Min Count</th>
-                      <th className="px-4 py-2 text-left">Max Count</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {Object.keys(groupConfigs).map((groupName) => {
-                      const cfg = groupConfigs[groupName];
-                      return (
-                        <tr key={groupName}>
-                          <td className="px-4 py-2 font-medium text-white">{groupName}</td>
-                          <td className="px-4 py-2">
-                            <input
-                              type="number"
-                              className={`${inputRight} w-20`}
-                              value={cfg.minMass ?? ''}
-                              min={0}
-                              max={1}
-                              step={0.01}
-                              onChange={(e) => updateGroupConfig(groupName, 'minMass', e.target.value)}
-                              placeholder="--"
-                            />
-                          </td>
-                          <td className="px-4 py-2">
-                            <input
-                              type="number"
-                              className={`${inputRight} w-20`}
-                              value={cfg.maxMass ?? ''}
-                              min={0}
-                              max={1}
-                              step={0.01}
-                              onChange={(e) => updateGroupConfig(groupName, 'maxMass', e.target.value)}
-                              placeholder="--"
-                            />
-                          </td>
-                          <td className="px-4 py-2">
-                            <input
-                              type="number"
-                              className={`${inputRight} w-20`}
-                              value={cfg.fixedMass ?? ''}
-                              min={0}
-                              max={1}
-                              step={0.01}
-                              onChange={(e) =>
-                                updateGroupConfig(groupName, 'fixedMass', e.target.value)
-                              }
-                              placeholder="--"
-                            />
-                          </td>
-                          <td className="px-4 py-2">
-                            <input
-                              type="number"
-                              className={`${inputRight} w-16`}
-                              value={cfg.minCount ?? ''}
-                              onChange={(e) => updateGroupConfig(groupName, 'minCount', e.target.value)}
-                              placeholder="--"
-                            />
-                          </td>
-                          <td className="px-4 py-2">
-                            <input
-                              type="number"
-                              className={`${inputRight} w-16`}
-                              value={cfg.maxCount ?? ''}
-                              onChange={(e) => updateGroupConfig(groupName, 'maxCount', e.target.value)}
-                              placeholder="--"
-                            />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+          <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-6">
+            <h2 className="text-lg font-semibold">Group Constraints</h2>
+            <p className="text-sm text-neutral-400">
+              Configure mass (0-1 scale) and count constraints for each group.
+            </p>
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full divide-y divide-white/10 text-sm">
+                <thead className="bg-white/5 text-xs uppercase tracking-wider text-neutral-300">
+                  <tr>
+                    <th className="px-4 py-2 text-left">Group</th>
+                    <th className="px-4 py-2 text-left">Min Mass</th>
+                    <th className="px-4 py-2 text-left">Max Mass</th>
+                    <th className="px-4 py-2 text-left">Fixed Mass</th>
+                    <th className="px-4 py-2 text-left">Min Count</th>
+                    <th className="px-4 py-2 text-left">Max Count</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {Object.keys(groupConfigs).map((groupName) => {
+                    const cfg = groupConfigs[groupName];
+                    return (
+                      <tr key={groupName}>
+                        <td className="px-4 py-2 font-medium text-white">{groupName}</td>
+                        <td className="px-4 py-2">
+                          <input
+                            type="number"
+                            className={`${inputRight} w-20`}
+                            value={cfg.minMass ?? ''}
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            onChange={(e) => updateGroupConfig(groupName, 'minMass', e.target.value)}
+                            placeholder="--"
+                          />
+                        </td>
+                        <td className="px-4 py-2">
+                          <input
+                            type="number"
+                            className={`${inputRight} w-20`}
+                            value={cfg.maxMass ?? ''}
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            onChange={(e) => updateGroupConfig(groupName, 'maxMass', e.target.value)}
+                            placeholder="--"
+                          />
+                        </td>
+                        <td className="px-4 py-2">
+                          <input
+                            type="number"
+                            className={`${inputRight} w-20`}
+                            value={cfg.fixedMass ?? ''}
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            onChange={(e) => updateGroupConfig(groupName, 'fixedMass', e.target.value)}
+                            placeholder="--"
+                          />
+                        </td>
+                        <td className="px-4 py-2">
+                          <input
+                            type="number"
+                            className={`${inputRight} w-16`}
+                            value={cfg.minCount ?? ''}
+                            onChange={(e) => updateGroupConfig(groupName, 'minCount', e.target.value)}
+                            placeholder="--"
+                          />
+                        </td>
+                        <td className="px-4 py-2">
+                          <input
+                            type="number"
+                            className={`${inputRight} w-16`}
+                            value={cfg.maxCount ?? ''}
+                            onChange={(e) => updateGroupConfig(groupName, 'maxCount', e.target.value)}
+                            placeholder="--"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -669,7 +659,6 @@ export default function CombinationApp() {
           </div>
         )}
 
-      {/* Results */}
         {/* Results */}
         {results.length > 0 && (
           <div className="rounded-2xl border border-white/10 bg-neutral-900/60 p-6">
