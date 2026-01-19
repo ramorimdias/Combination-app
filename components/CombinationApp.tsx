@@ -53,8 +53,14 @@ export default function CombinationApp() {
   const [isHydrated, setIsHydrated] = useState<boolean>(false);
 
   const storageKey = 'combinationAppSetup';
-  const epsilon = 1e-9;
+  const epsilon = 1e-6;
   const roundValue = (value: number) => Number(value.toFixed(6));
+  const decimalPlaces = (value: number) => {
+    if (!Number.isFinite(value)) return 0;
+    const text = value.toString();
+    if (!text.includes('.')) return 0;
+    return text.split('.')[1].length;
+  };
 
   useEffect(() => {
     const stored = window.localStorage.getItem(storageKey);
@@ -181,11 +187,19 @@ export default function CombinationApp() {
       if (comp.fixed !== null && comp.fixed !== undefined && !isNaN(Number(comp.fixed))) {
         return [Number(comp.fixed)];
       }
+      const step = comp.step > 0 ? comp.step : 0.1;
+      const scale = Math.pow(
+        10,
+        Math.max(decimalPlaces(step), decimalPlaces(comp.min), decimalPlaces(comp.max))
+      );
+      const start = Math.round(comp.min * scale);
+      const end = Math.round(comp.max * scale);
+      const stepInt = Math.max(1, Math.round(step * scale));
       const vals: number[] = [];
-      for (let v = comp.min; v <= comp.max + epsilon; v += comp.step) {
-        vals.push(roundValue(v));
+      for (let v = start; v <= end; v += stepInt) {
+        vals.push(roundValue(v / scale));
       }
-      return vals;
+      return vals.length > 0 ? vals : [roundValue(comp.min)];
     });
     // Precompute total loops for progress estimation
     const totalLoops = ranges.reduce((acc, arr) => acc * arr.length, 1);
@@ -223,6 +237,18 @@ export default function CombinationApp() {
             }
             if (cfg.minCount !== null && cfg.minCount !== undefined) {
               if (cnt < cfg.minCount) {
+                valid = false;
+                break;
+              }
+            }
+            if (cfg.maxMass !== null && cfg.maxMass !== undefined) {
+              if (mass > cfg.maxMass + epsilon) {
+                valid = false;
+                break;
+              }
+            }
+            if (cfg.maxCount !== null && cfg.maxCount !== undefined) {
+              if (cnt > cfg.maxCount) {
                 valid = false;
                 break;
               }
